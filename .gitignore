@@ -396,6 +396,7 @@ actionlint.tar.gz
 # End of petry-projects secrets baseline
 # ============================================================================
 # <<< END petry-projects secrets baseline <<<
+
 # OS / editor
 .DS_Store
 *.swp
