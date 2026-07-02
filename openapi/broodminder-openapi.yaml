@@ -1,0 +1,336 @@
+openapi: 3.1.0
+info:
+  title: BroodMinder External User API
+  version: 0.1.0-alpha
+  summary: Read-only access to a user's apiaries, hives, devices, sensor readings and notes.
+  description: |
+    Community-maintained, reverse-engineered OpenAPI 3.1 description of the
+    BroodMinder External User API, derived from observed live behavior. It is
+    NOT official — treat the BroodMinder API as the source of truth and please
+    open a PR to correct anything that drifts.
+
+    NOTES ON ACCURACY / OPEN QUESTIONS (flagged inline with `x-observed` and
+    `x-question` extensions):
+      * Several responses are bare JSON arrays, not objects.
+      * Authentication failures currently return HTTP 412, not 401/403.
+      * Units and the meaning of `swarmState` are not documented and are guessed here.
+  license:
+    name: MIT
+    url: https://github.com/petry-projects/broodminder-export/blob/main/LICENSE
+
+servers:
+  - url: https://external-api.mybroodminder.com
+    description: Production (alpha)
+
+security:
+  - ApiKeyAuth: []
+
+tags:
+  - name: Metadata
+    description: Account topology (apiaries and hives).
+  - name: Readings
+    description: Time-series sensor readings.
+  - name: Notes
+    description: Beekeeper notes attached to a hive.
+
+paths:
+  /user/metadata/apiaries:
+    get:
+      tags: [Metadata]
+      operationId: listApiaries
+      summary: List the authenticated user's apiaries (with nested hives).
+      description: |
+        Returns every apiary visible to the API key, each containing its hives.
+        x-observed: response is a BARE ARRAY of apiaries (not wrapped in an object).
+        Inactive apiaries are excluded.
+      responses:
+        "200":
+          description: Array of apiaries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Apiary" }
+              example:
+                - apiaryId: "apiary-id-example"
+                  name: "My Apiary"
+                  color: ""
+                  location: { latitude: 44.0, longitude: -72.0 }
+                  hives:
+                    - hiveId: "hive-id-example"
+                      name: "Hive 1"
+                      description: "10-frame deep"
+                      color: "#f45b5b"
+        "412": { $ref: "#/components/responses/AuthError" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /user/hive/{id}/readings:
+    get:
+      tags: [Readings]
+      operationId: getHiveReadings
+      summary: Sensor readings for one hive, grouped by position.
+      description: |
+        x-observed: response is a BARE ARRAY of position objects, each holding the
+        readings for the device currently at that position. A reading's metrics
+        live in a nested `readings` object whose keys vary by device type
+        (temperature, humidity, weight, swarmState).
+      parameters:
+        - $ref: "#/components/parameters/HiveId"
+        - $ref: "#/components/parameters/Start"
+        - $ref: "#/components/parameters/End"
+      responses:
+        "200":
+          description: Array of positions, each with its readings.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Position" }
+              example:
+                - positionID: "position-id-example"
+                  readings:
+                    - deviceId: "device-id-example"
+                      timestamp: 1779976806
+                      batteryLevel: null
+                      chargeRemaining: 100
+                      readings: { temperature: 87.15, swarmState: 25 }
+                    - deviceId: "device-id-example"
+                      timestamp: 1779980406
+                      batteryLevel: 83
+                      chargeRemaining: null
+                      readings: { temperature: 89.78, swarmState: 25 }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "412": { $ref: "#/components/responses/AuthError" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /user/hive/{id}/notes:
+    get:
+      tags: [Notes]
+      operationId: getHiveNotes
+      summary: Notes attached to one hive in a time window.
+      description: |
+        x-observed: response is a BARE ARRAY of notes (the docs describe an object
+        `{ notes: [...] }`; the live API returned a bare array — please confirm
+        the intended shape).
+      parameters:
+        - $ref: "#/components/parameters/HiveId"
+        - $ref: "#/components/parameters/Start"
+        - $ref: "#/components/parameters/End"
+      responses:
+        "200":
+          description: Array of notes (may be empty).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Note" }
+              example: []
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "412": { $ref: "#/components/responses/AuthError" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /user/device/{id}/readings:
+    get:
+      tags: [Readings]
+      operationId: getDeviceReadings
+      summary: Sensor readings for a single device.
+      description: |
+        Readings for one device. The same rows also appear inside the owning
+        hive's `/readings` response, so for bulk extraction the hive endpoint is
+        sufficient; this endpoint is convenient for single-device queries.
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+        - $ref: "#/components/parameters/Start"
+        - $ref: "#/components/parameters/End"
+      responses:
+        "200":
+          description: Array of reading rows for the device.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Reading" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "412": { $ref: "#/components/responses/AuthError" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      description: |
+        Per-user key. x-observed: a missing/invalid key currently returns HTTP 412
+        with body `{"code":412,"error":"api key not specified"|"Key not found"}`.
+        Industry-standard would be 401 (missing/invalid) and 403 (valid but not
+        permitted).
+
+  parameters:
+    HiveId:
+      name: id
+      in: path
+      required: true
+      description: Hive identifier (from listApiaries). Mixed formats observed (20-char and 32-char hex).
+      schema: { type: string }
+    DeviceId:
+      name: id
+      in: path
+      required: true
+      description: Device identifier (seen inside readings rows).
+      schema: { type: string }
+    Start:
+      name: start
+      in: query
+      required: true
+      description: Window start, Unix epoch SECONDS (UTC assumed).
+      schema: { type: integer, format: int64 }
+    End:
+      name: end
+      in: query
+      required: true
+      description: |
+        Window end, Unix epoch SECONDS (UTC assumed).
+        x-observed: the window (end - start) is limited to ~6 months per request.
+        There is no pagination cursor or total-count; clients must chunk by time.
+      schema: { type: integer, format: int64 }
+
+  responses:
+    AuthError:
+      description: |
+        Authentication failure. x-observed: returned as HTTP 412 today (recommend 401).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            missing: { value: { code: 412, error: "api key not specified" } }
+            invalid: { value: { code: 412, error: "Key not found" } }
+    BadRequest:
+      description: Invalid parameters or unknown resource.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Key is valid but the resource does not belong to this user.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RateLimited:
+      description: |
+        Rate limit exceeded (~1000 calls/day per key; body: "daily limit exceeded").
+        x-question: no X-RateLimit-* headers or Retry-After were observed —
+        recommend adding them.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Apiary:
+      type: object
+      required: [apiaryId, name, hives]
+      properties:
+        apiaryId: { type: string }
+        name: { type: string }
+        color: { type: string, description: "Hex color; may be empty string." }
+        location: { $ref: "#/components/schemas/Location" }
+        hives:
+          type: array
+          items: { $ref: "#/components/schemas/Hive" }
+
+    Hive:
+      type: object
+      required: [hiveId, name]
+      properties:
+        hiveId: { type: string }
+        name: { type: string }
+        description: { type: string, description: "Free text; may be empty." }
+        color: { type: string }
+
+    Location:
+      type: object
+      properties:
+        latitude: { type: number, format: double }
+        longitude: { type: number, format: double }
+
+    Position:
+      type: object
+      description: |
+        A physical position within a hive, with the readings of the device
+        installed there. x-observed: positionID is NOT globally unique — the same
+        value recurs across hives (it identifies a slot type). The unique series
+        key is deviceId (or hiveId + deviceId).
+      required: [positionID, readings]
+      properties:
+        positionID: { type: string }
+        positionName:
+          type: string
+          description: "x-observed: documented but NOT present in live responses — please confirm."
+        readings:
+          type: array
+          items: { $ref: "#/components/schemas/Reading" }
+
+    Reading:
+      type: object
+      required: [deviceId, timestamp, readings]
+      properties:
+        deviceId: { type: string }
+        timestamp:
+          type: integer
+          format: int64
+          description: Unix epoch seconds (UTC assumed).
+        batteryLevel:
+          type: [integer, "null"]
+          description: |
+            Battery percent. x-observed: batteryLevel and chargeRemaining arrive
+            null on ALTERNATING rows (one is populated while the other is null).
+            Recommend a single coalesced field or documenting the alternation.
+        chargeRemaining:
+          type: [integer, "null"]
+          description: Charge percent; see batteryLevel note.
+        readings: { $ref: "#/components/schemas/Metrics" }
+
+    Metrics:
+      type: object
+      description: |
+        Sensor metrics; keys present depend on device type.
+        x-question: UNITS AND SEMANTICS ARE UNDOCUMENTED. Values below are guesses.
+      additionalProperties: true
+      properties:
+        temperature:
+          type: [number, "null"]
+          description: "x-question: unit unconfirmed — values look like °F."
+        humidity:
+          type: [number, "null"]
+          description: "x-question: percent? (present on a minority of hives)."
+        weight:
+          type: [number, "null"]
+          description: |
+            x-question: unit unconfirmed (lbs?). x-observed: some values are
+            negative or implausible (e.g. -170), implying un-tared/uncalibrated
+            scales with no flag to distinguish good data.
+        swarmState:
+          type: [number, "null"]
+          description: "x-question: meaning/enum UNDOCUMENTED (e.g. values 25, 27). Please publish a legend."
+
+    Note:
+      type: object
+      description: "Shape inferred from docs; live sample was empty. Please confirm field names."
+      properties:
+        id: { type: string }
+        hiveId: { type: string }
+        description: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        timestamp: { type: integer, format: int64 }
+        created: { type: integer, format: int64 }
+        modified: { type: integer, format: int64 }
+
+    Error:
+      type: object
+      properties:
+        code: { type: integer }
+        error: { type: string }

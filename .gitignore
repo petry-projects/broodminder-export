@@ -14,3 +14,16 @@ coverage/
 *.log
 .env
 .env.*
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Secrets
+*.key
+
+# Your extracted hive data — stays local, never committed
+data/
