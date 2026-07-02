@@ -2,14 +2,8 @@
 # SOURCE OF TRUTH: petry-projects/.github/standards/workflows/ci.yml
 # Standard:        petry-projects/.github/standards/ci-standards.md#1-ci-pipeline-ciyml
 #
-# ADOPTING THIS WORKFLOW:
-#   1. This ships verbatim into repos created from petry-projects/repo-template.
-#   2. It is a CUSTOMIZE-PER-STACK stub: it passes out of the box so a fresh repo
-#      is green on day 0. Replace the placeholder step with your stack's
-#      lint / format / typecheck / unit-test / coverage steps (see the standard).
-#   3. The job name `build-and-test` is the required CI status check. Keep it — or,
-#      if you split into per-language jobs (e.g. TypeScript, Go, Python), update the
-#      repo's branch-protection required checks to match the new job names.
+# Customized for this repo's stack: Python (compile + pytest). The required
+# status check job name `build-and-test` is preserved.
 #
 # CONVENTIONS (enforced by the standard):
 #   • permissions: {} at top, least-privilege per job (CI needs contents: read)
@@ -40,14 +34,15 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
-      # ── Replace the step below with your stack's checks ───────────────────────
-      # Standard CI stages: lint, format check, type check, unit tests, coverage
-      # (plus integration / e2e / build where applicable). For example, a Node repo:
-      #   - uses: actions/setup-node@<sha> # vX   (with node-version + cache)
-      #   - run: npm ci
-      #   - run: npm run lint && npm run typecheck && npm test
-      # See BOOTSTRAP.md and the CI standard. Until you add real steps, the
-      # placeholder below keeps the required `build-and-test` check green.
-      - name: Placeholder — replace with real build/test steps
-        run: echo "CI stub — add your stack's lint/format/typecheck/test/coverage steps; see BOOTSTRAP.md."
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Compile sources
+        run: python -m compileall bm scripts
+      - name: Run tests
+        # Live contract tests skip automatically without BROODMINDER_API_KEY,
+        # so CI validates collection + offline paths and stays green.
+        run: python -m pytest -q
