@@ -25,15 +25,17 @@ DISCOVERY = ROOT / "data" / "discovery.json"
 
 
 def pytest_collection_modifyitems(config, items):
-    """These are LIVE contract tests against the real API. With no key set
-    (e.g. CI, or a fresh clone), skip them all rather than erroring — so the
+    """The contract tests are LIVE against the real API. With no key set
+    (e.g. CI, or a fresh clone), skip *those* rather than erroring — so the
     suite is green out of the box and only runs for real when a key is present.
+    Pure unit tests (e.g. test_scripts.py) are untouched and always run.
     """
     if os.environ.get("BROODMINDER_API_KEY"):
         return
     skip = pytest.mark.skip(reason="BROODMINDER_API_KEY not set; live contract tests skipped")
     for item in items:
-        item.add_marker(skip)
+        if Path(str(item.fspath)).name == "test_contract.py":
+            item.add_marker(skip)
 
 
 @pytest.fixture(scope="session")
