@@ -48,7 +48,7 @@ def find_sample_ids(apiaries):
     return hive_id, device_id
 
 
-def _sample_endpoint(bm, out, noun, label, fetch, sample_key, error_key, clip):
+def _sample_endpoint(out, noun, label, fetch, sample_key, error_key, clip):
     """Call one sample endpoint, storing the result or the error in ``out``.
 
     Keeps ``main()`` flat: the readings/notes probes are all the same shape
@@ -85,17 +85,17 @@ def main() -> int:
         end = now_epoch()
         start = end - 30 * DAY  # last 30 days as a probe
         if hive_id is not None:
-            _sample_endpoint(bm, out, "hive readings",
+            _sample_endpoint(out, "hive readings",
                              f"GET /user/hive/{hive_id}/readings (last 30d)",
                              lambda: bm.hive_readings(hive_id, start, end),
                              "hive_readings_sample", "hive_readings_error", 2500)
-            _sample_endpoint(bm, out, "hive notes",
+            _sample_endpoint(out, "hive notes",
                              f"GET /user/hive/{hive_id}/notes (last 30d)",
                              lambda: bm.hive_notes(hive_id, start, end),
                              "hive_notes_sample", "hive_notes_error", 1500)
 
         if device_id is not None:
-            _sample_endpoint(bm, out, "device readings",
+            _sample_endpoint(out, "device readings",
                              f"GET /user/device/{device_id}/readings (last 30d)",
                              lambda: bm.device_readings(device_id, start, end),
                              "device_readings_sample", "device_readings_error", 2500)

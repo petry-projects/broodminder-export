@@ -12,6 +12,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -80,8 +82,8 @@ def test_build_row_flattens_metrics_and_datetime():
     assert row["timestamp"] == 1_700_000_000
     assert row["datetime"] == "2023-11-14T22:13:20+00:00"
     assert row["batteryLevel"] == 90
-    assert row["chargeRemaining"] == 4.1
-    assert row["m_t_C"] == 21.5
+    assert row["chargeRemaining"] == pytest.approx(4.1)
+    assert row["m_t_C"] == pytest.approx(21.5)
     assert row["m_rh"] == 55
 
 
