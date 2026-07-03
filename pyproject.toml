@@ -24,6 +24,9 @@ packages = ["bm"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v -ra"
+markers = [
+    "offline: test reads only local files and never calls the live API; always runs",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
