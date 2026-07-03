@@ -25,7 +25,7 @@ packages = ["bm"]
 testpaths = ["tests"]
 addopts = "-v -ra"
 markers = [
-    "compliance: repo-compliance checks; manage their own credentials (or skip) and run regardless of BROODMINDER_API_KEY",
+    "live: test hits the live BroodMinder API; skipped without BROODMINDER_API_KEY",
 ]
 
 [build-system]
