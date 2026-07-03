@@ -49,6 +49,21 @@ permissions: {}
 
 jobs:
   dev-lead:
+    # Trigger-boundary guard for label bursts. Fleet Monitor (and other bots)
+    # apply several labels to a tracking issue at once — e.g. `dev-lead`,
+    # `fleet-tracker`, `health-check`. Each `labeled` add fires its own run, and
+    # the reusable workflow's per-issue concurrency lane (cancel-in-progress)
+    # then cancels them against each other, including the real `dev-lead` pickup.
+    # The intent classifier already routes only the `dev-lead` label to the
+    # engine (dev-lead-intent.sh: `case "$label_name" in dev-lead) … *)
+    # emit_skip "label-not-dev-lead"`), so drop the redundant labeled events here
+    # before a runner ever spins up. Only `issues` events are gated; every other
+    # trigger (PRs, reviews, comments, check_run, repository_dispatch) is
+    # unaffected. Repo-specific trigger adjustment permitted by this stub's
+    # header and ../ci-standards.md#dev-lead-agent. See petry-projects/broodminder-export#7.
+    if: >-
+      github.event_name != 'issues' ||
+      github.event.label.name == 'dev-lead'
     # Pinned to the moving dev-lead/stable channel tag, not @main, so a broken
     # change to dev-lead can no longer gate its own fix (the self-host circular
     # dependency). Promotion is done by moving the dev-lead/stable tag centrally; this
