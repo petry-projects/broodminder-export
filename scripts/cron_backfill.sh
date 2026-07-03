@@ -20,9 +20,9 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$DIR/.venv/bin/python"
 LOG="$DIR/data/cron_backfill.log"
 cd "$DIR" || exit 1
-[ -x "$PY" ] || PY="python3"   # fall back to system python if no venv
+[[ -x "$PY" ]] || PY="python3"   # fall back to system python if no venv
 
-ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+ts() { date -u +%Y-%m-%dT%H:%M:%SZ; return; }
 
 echo "=== $(ts) backfill run start ===" >> "$LOG"
 # Walk newest->oldest, stopping each hive after 3 consecutive empty 6-month
