@@ -65,6 +65,7 @@ def count_notes(payload) -> int:
 
 
 def load_manifest(path: Path) -> dict:
+    path = path.resolve()
     if path.exists():
         return json.loads(path.read_text())
     return {"completed": {}, "meta": {}}
@@ -154,7 +155,9 @@ def extract_hive(bm, a, h, raw, completed, args, start, end, window, save_manife
     resumed backfill doesn't walk past the known data edge.
     """
     hid = h["hiveId"]
-    hdir = raw / hid
+    hdir = (raw / hid).resolve()
+    if not hdir.is_relative_to(raw):
+        raise ValueError(f"Unsafe hiveId returned by API: {hid!r}")
     wins = list(iter_windows(start, end, window))
     if args.reverse:
         wins.reverse()
@@ -189,7 +192,7 @@ def main() -> int:
     else:
         end = now_epoch() // 86400 * 86400
     window = args.window_days * 24 * 60 * 60
-    out = Path(args.out)
+    out = Path(args.out).resolve()
     raw = out / "raw"
     out.mkdir(parents=True, exist_ok=True)
     manifest_path = out / "manifest.json"
