@@ -22,7 +22,7 @@ import pytest
 # credential (or skip), so exempt them from the BROODMINDER_API_KEY blanket skip.
 pytestmark = pytest.mark.compliance
 
-REPO_SLUG = "petry-projects/broodminder-export"
+REPO_SLUG = os.environ.get("GITHUB_REPOSITORY", "petry-projects/broodminder-export")
 
 
 def repo_setting_enabled(repo_json: dict, setting: str) -> bool:
@@ -30,8 +30,10 @@ def repo_setting_enabled(repo_json: dict, setting: str) -> bool:
 
     A missing setting is treated as *not enabled* so the compliance assertion
     fails closed rather than silently passing on an unexpected API payload.
+    Only the boolean ``True`` is accepted; truthy non-boolean values (e.g. the
+    string ``"false"``) are treated as non-compliant.
     """
-    return bool(repo_json.get(setting, False))
+    return repo_json.get(setting, False) is True
 
 
 # --- offline predicate tests (always run; give the guard teeth) --------------
@@ -48,6 +50,11 @@ def test_predicate_false_when_disabled():
 
 def test_predicate_false_when_missing():
     assert repo_setting_enabled({}, "allow_auto_merge") is False
+
+
+def test_predicate_false_when_truthy_string():
+    # The string "false" is truthy in Python; strict `is True` must reject it.
+    assert repo_setting_enabled({"allow_auto_merge": "false"}, "allow_auto_merge") is False
 
 
 # --- live guard against the real repository setting (skips without a token) ---
