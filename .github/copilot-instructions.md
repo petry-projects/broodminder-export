@@ -16,7 +16,7 @@ JSON, NDJSON, and CSV files.
 
 ## Project Structure
 
-```
+```text
 bm/
   __init__.py
   client.py          # reusable BroodMinderClient: auth, 429-aware retry, time windowing
@@ -42,8 +42,8 @@ lives under git-ignored `data/` and must never be committed.
 - Discover:   `.venv/bin/python scripts/discover.py` (auth check + topology sample)
 - Extract:    `.venv/bin/python scripts/extract_all.py --start 2025-01-01`
 - Flatten:    `.venv/bin/python scripts/flatten.py` (raw -> NDJSON/CSV, no API calls)
-- Compile:    `python -m compileall bm scripts`
-- Test:       `python -m pytest -q`
+- Compile:    `.venv/bin/python -m compileall bm scripts`
+- Test:       `.venv/bin/python -m pytest -q`
 
 ## Required Environment Variables
 
