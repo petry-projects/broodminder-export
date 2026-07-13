@@ -24,6 +24,9 @@ packages = ["bm"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v -ra"
+markers = [
+    "compliance: repo-compliance checks; manage their own credentials (or skip) and run regardless of BROODMINDER_API_KEY",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
