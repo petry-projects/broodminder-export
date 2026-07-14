@@ -46,6 +46,21 @@ def write_gz(path: Path, obj) -> None:
         json.dump(obj, fh)
 
 
+def safe_subdir(base: Path, name: str) -> Path:
+    """Resolve ``base/name`` while confining it to ``base``.
+
+    The hive id comes from the remote API and the output root from a CLI flag —
+    neither should be able to steer writes outside the chosen output tree via
+    ``..`` segments or an absolute path (path traversal, SonarCloud S8707).
+    Return the resolved child, or raise ``ValueError`` if it escapes ``base``.
+    """
+    base = base.resolve()
+    target = (base / name).resolve()
+    if target != base and not target.is_relative_to(base):
+        raise ValueError(f"unsafe path component {name!r} escapes {base}")
+    return target
+
+
 def parse_date(s: str) -> int:
     return int(datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp())
 
@@ -130,7 +145,9 @@ def main() -> int:
 
             for a, h in hives:
                 hid = h["hiveId"]
-                hdir = raw / hid
+                # Confine the API-supplied id to the output tree so a crafted
+                # hiveId (or --out) can't escape via traversal (S8707).
+                hdir = safe_subdir(raw, hid)
                 wins = list(iter_windows(start, end, window))
                 if args.reverse:
                     wins.reverse()
