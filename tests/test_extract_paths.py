@@ -9,6 +9,7 @@ pin the ``safe_subdir`` traversal guard that enforces that invariant.
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -17,8 +18,14 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "extract_all.py"
 
 _spec = importlib.util.spec_from_file_location("extract_all", SCRIPT)
+if _spec is None or _spec.loader is None:
+    raise ImportError(f"Cannot load {SCRIPT}")
 extract_all = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(extract_all)
+_saved_path = sys.path.copy()
+try:
+    _spec.loader.exec_module(extract_all)
+finally:
+    sys.path[:] = _saved_path
 
 
 def test_safe_subdir_allows_normal_id(tmp_path):
@@ -44,3 +51,15 @@ def test_safe_subdir_confines_within_base(tmp_path):
     """Any accepted result is always inside the base tree."""
     got = extract_all.safe_subdir(tmp_path, "nested-id")
     assert got.is_relative_to(tmp_path.resolve())
+
+
+def test_safe_subdir_rejects_dot_name(tmp_path):
+    """A '.' name resolves to base itself, which must be rejected as a strict subdirectory is required."""
+    with pytest.raises(ValueError):
+        extract_all.safe_subdir(tmp_path, ".")
+
+
+def test_safe_subdir_rejects_empty_name(tmp_path):
+    """An empty name resolves to base itself, which must be rejected."""
+    with pytest.raises(ValueError):
+        extract_all.safe_subdir(tmp_path, "")

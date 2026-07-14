@@ -56,7 +56,7 @@ def safe_subdir(base: Path, name: str) -> Path:
     """
     base = base.resolve()
     target = (base / name).resolve()
-    if target != base and not target.is_relative_to(base):
+    if target == base or not target.is_relative_to(base):
         raise ValueError(f"unsafe path component {name!r} escapes {base}")
     return target
 
