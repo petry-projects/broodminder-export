@@ -18,6 +18,9 @@ import pytest
 
 from bm.client import BroodMinderClient, MAX_WINDOW_SECONDS
 
+# Every test in this module hits the live API and is skipped without a key.
+pytestmark = pytest.mark.live
+
 
 # --------------------------------------------------------------------------
 # /user/metadata/apiaries
