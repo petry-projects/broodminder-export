@@ -32,6 +32,36 @@ def first(obj, *keys):
     return None
 
 
+def find_sample_ids(apiaries):
+    """Walk the apiary tree for the first hive id and device id to sample.
+
+    Tolerates the two observed top-level shapes (bare list or {apiaries:[...]})
+    and the several id-key spellings the alpha API uses.
+    """
+    hive_id = device_id = None
+    containers = apiaries if isinstance(apiaries, list) else apiaries.get("apiaries", [])
+    for ap in containers or []:
+        for hv in first(ap, "hives") or []:
+            hive_id = hive_id or first(hv, "hiveId", "id", "hiveID")
+            for dv in first(hv, "devices", "positions") or []:
+                device_id = device_id or first(dv, "deviceId", "id", "deviceID")
+    return hive_id, device_id
+
+
+def probe(out, fetch, header, sample_key, error_key, error_label, limit):
+    """Run one sampling call, storing the JSON under `sample_key` (and echoing a
+    truncated dump) or the error string under `error_key`."""
+    print(header)
+    try:
+        data = fetch()
+    except BroodMinderError as e:
+        out[error_key] = str(e)
+        print(f"  {error_label} error: {e}")
+        return
+    out[sample_key] = data
+    print(json.dumps(data, indent=2)[:limit])
+
+
 def main() -> int:
     out: dict = {}
     with BroodMinderClient() as bm:
@@ -45,46 +75,23 @@ def main() -> int:
         out["apiaries"] = apiaries
         print(json.dumps(apiaries, indent=2)[:4000])
 
-        # Walk the tree to find a hive id and a device id to sample.
-        hive_id = device_id = None
-        containers = apiaries if isinstance(apiaries, list) else apiaries.get("apiaries", [])
-        for ap in containers or []:
-            for hv in first(ap, "hives") or []:
-                hive_id = hive_id or first(hv, "hiveId", "id", "hiveID")
-                for dv in (first(hv, "devices", "positions") or []):
-                    device_id = device_id or first(dv, "deviceId", "id", "deviceID")
+        hive_id, device_id = find_sample_ids(apiaries)
         print(f"\nsample hive_id={hive_id}  device_id={device_id}")
 
         end = now_epoch()
         start = end - 30 * DAY  # last 30 days as a probe
         if hive_id is not None:
-            print(f"→ GET /user/hive/{hive_id}/readings (last 30d)")
-            try:
-                hr = bm.hive_readings(hive_id, start, end)
-                out["hive_readings_sample"] = hr
-                print(json.dumps(hr, indent=2)[:2500])
-            except BroodMinderError as e:
-                out["hive_readings_error"] = str(e)
-                print(f"  hive readings error: {e}")
-
-            print(f"→ GET /user/hive/{hive_id}/notes (last 30d)")
-            try:
-                hn = bm.hive_notes(hive_id, start, end)
-                out["hive_notes_sample"] = hn
-                print(json.dumps(hn, indent=2)[:1500])
-            except BroodMinderError as e:
-                out["hive_notes_error"] = str(e)
-                print(f"  hive notes error: {e}")
+            probe(out, lambda: bm.hive_readings(hive_id, start, end),
+                  f"→ GET /user/hive/{hive_id}/readings (last 30d)",
+                  "hive_readings_sample", "hive_readings_error", "hive readings", 2500)
+            probe(out, lambda: bm.hive_notes(hive_id, start, end),
+                  f"→ GET /user/hive/{hive_id}/notes (last 30d)",
+                  "hive_notes_sample", "hive_notes_error", "hive notes", 1500)
 
         if device_id is not None:
-            print(f"→ GET /user/device/{device_id}/readings (last 30d)")
-            try:
-                dr = bm.device_readings(device_id, start, end)
-                out["device_readings_sample"] = dr
-                print(json.dumps(dr, indent=2)[:2500])
-            except BroodMinderError as e:
-                out["device_readings_error"] = str(e)
-                print(f"  device readings error: {e}")
+            probe(out, lambda: bm.device_readings(device_id, start, end),
+                  f"→ GET /user/device/{device_id}/readings (last 30d)",
+                  "device_readings_sample", "device_readings_error", "device readings", 2500)
 
         out["_call_count"] = bm.call_count
         print(f"\ntotal API calls this run: {bm.call_count}")

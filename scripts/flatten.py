@@ -54,6 +54,124 @@ def iter_note_files(hdir: Path):
     yield from sorted(list(hdir.glob("*.notes.json")) + list(hdir.glob("*.notes.json.gz")))
 
 
+def iter_positions(hdir: Path):
+    """Yield (positionID, readings-list) for every position across a hive's
+    readings windows (gz or plain)."""
+    for f in iter_reading_files(hdir):
+        for pos in load_json(f) or []:
+            yield pos.get("positionID"), pos.get("readings", []) or []
+
+
+def iter_reading_rows(raw: Path, meta: dict):
+    """Yield (hiveId, hive-meta, positionID, reading) for every reading row.
+
+    Dedupes within a hive: overlapping/re-fetched windows can repeat the same
+    (position, device, timestamp). The `seen` set resets per hive to bound
+    memory.
+    """
+    for hdir in sorted(raw.iterdir()):
+        if not hdir.is_dir():
+            continue
+        hid = hdir.name
+        m = meta.get(hid, {})
+        seen: set = set()
+        for pid, readings in iter_positions(hdir):
+            for r in readings:
+                dk = (pid, r.get("deviceId"), r.get("timestamp"))
+                if dk in seen:
+                    continue
+                seen.add(dk)
+                yield hid, m, pid, r
+
+
+def discover_metric_keys(raw: Path) -> list[str]:
+    """Pass 1: scan every readings row to build the stable, sorted metric key
+    set (so the CSV has a fixed header)."""
+    metric_keys: set[str] = set()
+    for hdir in sorted(raw.iterdir()):
+        if not hdir.is_dir():
+            continue
+        for _pid, readings in iter_positions(hdir):
+            for r in readings:
+                metric_keys.update((r.get("readings") or {}).keys())
+    return sorted(metric_keys)
+
+
+def build_row(hid: str, m: dict, pid, r: dict) -> dict:
+    """Build one flattened reading row (base columns + m_-prefixed metrics)."""
+    ts = r.get("timestamp")
+    metrics = r.get("readings") or {}
+    return {
+        "apiaryId": m.get("apiaryId"), "apiaryName": m.get("apiaryName"),
+        "hiveId": hid, "hiveName": m.get("hiveName"),
+        "positionID": pid, "deviceId": r.get("deviceId"),
+        "timestamp": ts,
+        "datetime": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat() if ts else None,
+        "batteryLevel": r.get("batteryLevel"),
+        "chargeRemaining": r.get("chargeRemaining"),
+        **{f"m_{k}": v for k, v in metrics.items()},
+    }
+
+
+def update_coverage(c: dict, r: dict, pid, ts) -> None:
+    """Fold one row into a hive's coverage accumulator."""
+    c["rows"] += 1
+    c["devices"].add(r.get("deviceId"))
+    c["positions"].add(pid)
+    if ts:
+        c["min_ts"] = ts if c["min_ts"] is None else min(c["min_ts"], ts)
+        c["max_ts"] = ts if c["max_ts"] is None else max(c["max_ts"], ts)
+
+
+def write_readings(raw: Path, meta: dict, all_cols: list[str],
+                   ndjson_fh, csv_writer, coverage) -> int:
+    """Pass 2: stream deduped reading rows to ndjson (+ optional csv); return
+    the row count and fold each row into `coverage`."""
+    n_rows = 0
+    for hid, m, pid, r in iter_reading_rows(raw, meta):
+        row = build_row(hid, m, pid, r)
+        ndjson_fh.write(json.dumps(row) + "\n")
+        if csv_writer:
+            csv_writer.writerow({k: row.get(k) for k in all_cols})
+        n_rows += 1
+        update_coverage(coverage[hid], r, pid, r.get("timestamp"))
+    return n_rows
+
+
+def write_notes(raw: Path, meta: dict, path: Path) -> int:
+    """Write all notes (small) to plain ndjson; return the note count."""
+    n_notes = 0
+    with path.open("w") as fh:
+        for hdir in sorted(raw.iterdir()):
+            if not hdir.is_dir():
+                continue
+            hid = hdir.name
+            m = meta.get(hid, {})
+            for f in iter_note_files(hdir):
+                payload = load_json(f)
+                items = payload if isinstance(payload, list) else (payload or {}).get("notes", [])
+                for n in items or []:
+                    fh.write(json.dumps({"hiveId": hid, "hiveName": m.get("hiveName"), **n}) + "\n")
+                    n_notes += 1
+    return n_notes
+
+
+def build_coverage(coverage: dict, meta: dict) -> dict:
+    """Render the per-hive coverage accumulators into the serializable summary."""
+    cov_out = {}
+    for hid, c in coverage.items():
+        m = meta.get(hid, {})
+        cov_out[hid] = {
+            "apiaryName": m.get("apiaryName"), "hiveName": m.get("hiveName"),
+            "rows": c["rows"],
+            "devices": sorted(d for d in c["devices"] if d),
+            "positions": sorted(p for p in c["positions"] if p),
+            "earliest": datetime.fromtimestamp(c["min_ts"], tz=timezone.utc).isoformat() if c["min_ts"] else None,
+            "latest": datetime.fromtimestamp(c["max_ts"], tz=timezone.utc).isoformat() if c["max_ts"] else None,
+        }
+    return cov_out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--no-csv", action="store_true", help="skip the (large) CSV output")
@@ -70,98 +188,31 @@ def main() -> int:
                  "deviceId", "timestamp", "datetime", "batteryLevel", "chargeRemaining"]
 
     # Pass 1: discover metric keys (stable, tiny set) so CSV has a fixed header.
-    metric_keys: set[str] = set()
-    for hdir in sorted(RAW.iterdir()):
-        if not hdir.is_dir():
-            continue
-        for f in iter_reading_files(hdir):
-            for pos in load_json(f) or []:
-                for r in pos.get("readings", []) or []:
-                    metric_keys.update((r.get("readings") or {}).keys())
-    metric_cols = [f"m_{k}" for k in sorted(metric_keys)]
+    metric_keys = discover_metric_keys(RAW)
+    metric_cols = [f"m_{k}" for k in metric_keys]
+    all_cols = base_cols + metric_cols
 
     # Pass 2: stream rows to gzipped ndjson (+ optional gzipped csv).
     coverage = defaultdict(lambda: {"rows": 0, "min_ts": None, "max_ts": None,
                                     "devices": set(), "positions": set()})
-    n_rows = 0
     ndjson_fh = gzip.open(OUT / "readings.ndjson.gz", "wt", encoding="utf-8")
     csv_fh = csv_writer = None
     if not args.no_csv:
         csv_fh = io.TextIOWrapper(gzip.open(OUT / "readings.csv.gz", "wb"), encoding="utf-8", newline="")
-        csv_writer = csv.DictWriter(csv_fh, fieldnames=base_cols + metric_cols)
+        csv_writer = csv.DictWriter(csv_fh, fieldnames=all_cols)
         csv_writer.writeheader()
 
     try:
-        for hdir in sorted(RAW.iterdir()):
-            if not hdir.is_dir():
-                continue
-            hid = hdir.name
-            m = meta.get(hid, {})
-            # Dedupe within a hive: overlapping/re-fetched windows can repeat the
-            # same (position, device, timestamp). Reset per hive to bound memory.
-            seen: set = set()
-            for f in iter_reading_files(hdir):
-                for pos in load_json(f) or []:
-                    pid = pos.get("positionID")
-                    for r in pos.get("readings", []) or []:
-                        ts = r.get("timestamp")
-                        dk = (pid, r.get("deviceId"), ts)
-                        if dk in seen:
-                            continue
-                        seen.add(dk)
-                        metrics = r.get("readings") or {}
-                        row = {
-                            "apiaryId": m.get("apiaryId"), "apiaryName": m.get("apiaryName"),
-                            "hiveId": hid, "hiveName": m.get("hiveName"),
-                            "positionID": pid, "deviceId": r.get("deviceId"),
-                            "timestamp": ts,
-                            "datetime": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat() if ts else None,
-                            "batteryLevel": r.get("batteryLevel"),
-                            "chargeRemaining": r.get("chargeRemaining"),
-                            **{f"m_{k}": v for k, v in metrics.items()},
-                        }
-                        ndjson_fh.write(json.dumps(row) + "\n")
-                        if csv_writer:
-                            csv_writer.writerow({k: row.get(k) for k in base_cols + metric_cols})
-                        n_rows += 1
-                        c = coverage[hid]
-                        c["rows"] += 1
-                        c["devices"].add(r.get("deviceId"))
-                        c["positions"].add(pid)
-                        if ts:
-                            c["min_ts"] = ts if c["min_ts"] is None else min(c["min_ts"], ts)
-                            c["max_ts"] = ts if c["max_ts"] is None else max(c["max_ts"], ts)
+        n_rows = write_readings(RAW, meta, all_cols, ndjson_fh, csv_writer, coverage)
     finally:
         ndjson_fh.close()
         if csv_fh:
             csv_fh.close()
 
     # Notes (small) -> plain ndjson
-    n_notes = 0
-    with (OUT / "notes.ndjson").open("w") as fh:
-        for hdir in sorted(RAW.iterdir()):
-            if not hdir.is_dir():
-                continue
-            hid = hdir.name
-            m = meta.get(hid, {})
-            for f in iter_note_files(hdir):
-                payload = load_json(f)
-                items = payload if isinstance(payload, list) else (payload or {}).get("notes", [])
-                for n in items or []:
-                    fh.write(json.dumps({"hiveId": hid, "hiveName": m.get("hiveName"), **n}) + "\n")
-                    n_notes += 1
+    n_notes = write_notes(RAW, meta, OUT / "notes.ndjson")
 
-    cov_out = {}
-    for hid, c in coverage.items():
-        m = meta.get(hid, {})
-        cov_out[hid] = {
-            "apiaryName": m.get("apiaryName"), "hiveName": m.get("hiveName"),
-            "rows": c["rows"],
-            "devices": sorted(d for d in c["devices"] if d),
-            "positions": sorted(p for p in c["positions"] if p),
-            "earliest": datetime.fromtimestamp(c["min_ts"], tz=timezone.utc).isoformat() if c["min_ts"] else None,
-            "latest": datetime.fromtimestamp(c["max_ts"], tz=timezone.utc).isoformat() if c["max_ts"] else None,
-        }
+    cov_out = build_coverage(coverage, meta)
     (OUT / "coverage.json").write_text(json.dumps(cov_out, indent=2))
 
     print(f"readings rows : {n_rows}")
