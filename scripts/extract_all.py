@@ -54,6 +54,12 @@ def safe_subdir(base: Path, name: str) -> Path:
     ``..`` segments or an absolute path (path traversal, SonarCloud S8707).
     Return the resolved child, or raise ``ValueError`` if it escapes ``base``.
     """
+    # Sanitize before any path operation so taint analysis sees clean input.
+    if not name:
+        raise ValueError(f"unsafe path component {name!r} escapes {base}")
+    candidate = Path(name)
+    if candidate.is_absolute() or any(part == ".." for part in candidate.parts):
+        raise ValueError(f"unsafe path component {name!r} escapes {base}")
     base = base.resolve()
     target = (base / name).resolve()
     if target == base or not target.is_relative_to(base):
