@@ -70,7 +70,7 @@ def test_dev_lead_stub_passes_valid_agent_ref():
     """The stub must pass `with: agent_ref: dev-lead/<channel>` where the
     channel is `stable`, `next`, or `ring<N>` (ci-standards.md#dev-lead-agent)."""
     text = _dev_lead_text()
-    m = re.search(r"^\s*agent_ref:\s*(\S+)\s*$", text, re.MULTILINE)
+    m = re.search(r"^\s*agent_ref:\s*['\"]?([^'\"\s]+)['\"]?\s*$", text, re.MULTILINE)
     assert m, "dev-lead.yml must pass `with: agent_ref: dev-lead/<channel>`"
     ref = m.group(1)
     assert DEV_LEAD_CHANNEL.match(ref), (
@@ -84,12 +84,12 @@ def test_dev_lead_uses_ref_matches_agent_ref():
     reusable checks out its own scripts/prompts from the channel it runs."""
     text = _dev_lead_text()
     uses = re.search(
-        r"^\s*uses:\s*petry-projects/\.github-private/\.github/workflows/"
-        r"dev-lead-reusable\.yml@(\S+)",
+        r"^\s*uses:\s*['\"]?petry-projects/\.github-private/\.github/workflows/"
+        r"dev-lead-reusable\.yml@([^'\"\s]+)['\"]?",
         text,
         re.MULTILINE,
     )
-    agent = re.search(r"^\s*agent_ref:\s*(\S+)\s*$", text, re.MULTILINE)
+    agent = re.search(r"^\s*agent_ref:\s*['\"]?([^'\"\s]+)['\"]?\s*$", text, re.MULTILINE)
     assert uses, "dev-lead.yml must pin the reusable via `uses: ...@<channel>`"
     assert agent, "dev-lead.yml must pass `with: agent_ref: dev-lead/<channel>`"
     assert DEV_LEAD_CHANNEL.match(uses.group(1)), (
