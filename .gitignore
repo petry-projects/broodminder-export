@@ -418,7 +418,5 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 
-# Secrets
-
 # Your extracted hive data — stays local, never committed
 data/
