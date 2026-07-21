@@ -38,7 +38,7 @@ def walk_sample_ids(apiaries):
     Handles both the observed bare-list shape and the documented
     ``{"apiaries": [...]}`` object shape, and the schema's key aliases.
     """
-    containers = apiaries if isinstance(apiaries, list) else apiaries.get("apiaries", [])
+    containers = apiaries if isinstance(apiaries, list) else (apiaries or {}).get("apiaries", [])
     hive_id = device_id = None
     for ap in containers or []:
         for hv in first(ap, "hives") or []:

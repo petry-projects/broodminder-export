@@ -85,7 +85,7 @@ def build_row(hid: str, m: dict, pos: dict, r: dict, ts) -> dict:
         "hiveId": hid, "hiveName": m.get("hiveName"),
         "positionID": pos.get("positionID"), "deviceId": r.get("deviceId"),
         "timestamp": ts,
-        "datetime": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat() if ts else None,
+        "datetime": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat() if ts is not None else None,
         "batteryLevel": r.get("batteryLevel"),
         "chargeRemaining": r.get("chargeRemaining"),
         **{f"m_{k}": v for k, v in metrics.items()},
@@ -97,7 +97,7 @@ def _update_coverage(c: dict, r: dict, pid, ts) -> None:
     c["rows"] += 1
     c["devices"].add(r.get("deviceId"))
     c["positions"].add(pid)
-    if ts:
+    if ts is not None:
         c["min_ts"] = ts if c["min_ts"] is None else min(c["min_ts"], ts)
         c["max_ts"] = ts if c["max_ts"] is None else max(c["max_ts"], ts)
 
@@ -154,8 +154,8 @@ def build_coverage_out(coverage: dict, meta: dict) -> dict:
             "rows": c["rows"],
             "devices": sorted(d for d in c["devices"] if d),
             "positions": sorted(p for p in c["positions"] if p),
-            "earliest": datetime.fromtimestamp(c["min_ts"], tz=timezone.utc).isoformat() if c["min_ts"] else None,
-            "latest": datetime.fromtimestamp(c["max_ts"], tz=timezone.utc).isoformat() if c["max_ts"] else None,
+            "earliest": datetime.fromtimestamp(c["min_ts"], tz=timezone.utc).isoformat() if c["min_ts"] is not None else None,
+            "latest": datetime.fromtimestamp(c["max_ts"], tz=timezone.utc).isoformat() if c["max_ts"] is not None else None,
         }
     return cov_out
 

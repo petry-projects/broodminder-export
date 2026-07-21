@@ -51,6 +51,7 @@ def test_walk_sample_ids_dict_form_and_alt_keys():
 def test_walk_sample_ids_empty():
     assert discover.walk_sample_ids([]) == (None, None)
     assert discover.walk_sample_ids([{"hives": []}]) == (None, None)
+    assert discover.walk_sample_ids(None) == (None, None)
 
 
 def test_sample_endpoint_success_stores_and_clips():
