@@ -24,15 +24,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 OUT = ROOT / "data" / "extract"
 RAW = OUT / "raw"
 
-
-def load_json(path: Path):
-    if path.suffix == ".gz":
-        with gzip.open(path, "rt", encoding="utf-8") as fh:
-            return json.load(fh)
-    return json.loads(path.read_text())
+from bm.helpers import (  # noqa: E402
+    build_row,
+    discover_metric_keys,
+    hive_dirs,
+    iter_rows,
+    load_json,
+)
 
 
 def hive_meta(manifest: dict) -> dict:
@@ -45,53 +47,8 @@ def hive_meta(manifest: dict) -> dict:
     return meta
 
 
-def iter_reading_files(hdir: Path):
-    """All readings windows for a hive, gz or plain."""
-    yield from sorted(list(hdir.glob("*.readings.json")) + list(hdir.glob("*.readings.json.gz")))
-
-
 def iter_note_files(hdir: Path):
     yield from sorted(list(hdir.glob("*.notes.json")) + list(hdir.glob("*.notes.json.gz")))
-
-
-def hive_dirs(raw_root: Path):
-    """Sorted hive subdirectories of the raw extract root."""
-    return [d for d in sorted(raw_root.iterdir()) if d.is_dir()]
-
-
-def iter_rows(hdir: Path):
-    """Yield (positionID, reading) for every readings row under a hive dir."""
-    for f in iter_reading_files(hdir):
-        for pos in load_json(f) or []:
-            pid = pos.get("positionID")
-            for r in pos.get("readings", []) or []:
-                yield pid, r
-
-
-def discover_metric_keys(raw_root: Path) -> set:
-    """Pass 1: scan every readings row to collect the (small, stable) set of
-    metric keys, so the CSV can have a fixed header."""
-    metric_keys: set[str] = set()
-    for hdir in hive_dirs(raw_root):
-        for _pid, r in iter_rows(hdir):
-            metric_keys.update((r.get("readings") or {}).keys())
-    return metric_keys
-
-
-def build_row(m: dict, hid: str, pid, r: dict) -> dict:
-    """Build one flat output row from a hive's meta and a single reading."""
-    ts = r.get("timestamp")
-    metrics = r.get("readings") or {}
-    return {
-        "apiaryId": m.get("apiaryId"), "apiaryName": m.get("apiaryName"),
-        "hiveId": hid, "hiveName": m.get("hiveName"),
-        "positionID": pid, "deviceId": r.get("deviceId"),
-        "timestamp": ts,
-        "datetime": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat() if ts else None,
-        "batteryLevel": r.get("batteryLevel"),
-        "chargeRemaining": r.get("chargeRemaining"),
-        **{f"m_{k}": v for k, v in metrics.items()},
-    }
 
 
 def _update_coverage(c: dict, r: dict, pid, ts) -> None:

@@ -17,46 +17,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from bm.client import BroodMinderClient, BroodMinderError, now_epoch  # noqa: E402
+from bm.client import BroodMinderClient, now_epoch  # noqa: E402
+from bm.helpers import find_sample_ids, first, sample_endpoint  # noqa: E402
 
 DAY = 24 * 60 * 60
 OUT = Path(__file__).resolve().parent.parent / "data" / "discovery.json"
-
-
-def first(obj, *keys):
-    """Return the first present key from a dict (schemas vary)."""
-    if isinstance(obj, dict):
-        for k in keys:
-            if k in obj:
-                return obj[k]
-    return None
-
-
-def find_sample_ids(containers):
-    """Walk the apiary -> hive -> device tree and return the first
-    (hive_id, device_id) we can find to sample. Either may be None."""
-    hive_id = device_id = None
-    for ap in containers or []:
-        for hv in first(ap, "hives") or []:
-            hive_id = hive_id or first(hv, "hiveId", "id", "hiveID")
-            for dv in first(hv, "devices", "positions") or []:
-                device_id = device_id or first(dv, "deviceId", "id", "deviceID")
-    return hive_id, device_id
-
-
-def sample_endpoint(out, key, header, fetch, preview):
-    """Run one discovery fetch: print `header`, then record the result under
-    `<key>_sample` (previewed) or the error under `<key>_error`. Errors are
-    captured, not raised, so a single failing endpoint doesn't abort discovery."""
-    print(header)
-    try:
-        data = fetch()
-    except BroodMinderError as e:
-        out[f"{key}_error"] = str(e)
-        print(f"  {key.replace('_', ' ')} error: {e}")
-        return
-    out[f"{key}_sample"] = data
-    print(json.dumps(data, indent=2)[:preview])
 
 
 def main() -> int:
