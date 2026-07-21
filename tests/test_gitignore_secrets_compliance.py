@@ -47,7 +47,7 @@ REQUIRED_PATTERNS = (
 
 def _gitignore_text() -> str:
     assert GITIGNORE.exists(), f"{GITIGNORE} is missing"
-    return GITIGNORE.read_text()
+    return GITIGNORE.read_text(encoding='utf-8')
 
 
 def _baseline_block(text: str) -> str:
@@ -58,9 +58,9 @@ def _baseline_block(text: str) -> str:
     """
     start = text.find(BEGIN_MARKER)
     end = text.find(END_MARKER)
-    if start == -1 or end == -1 or end <= start:
+    if start == -1 or end == -1 or end <= start + len(BEGIN_MARKER):
         return ""
-    return text[start:end]
+    return text[start + len(BEGIN_MARKER):end]
 
 
 def missing_baseline_patterns(text: str, required=REQUIRED_PATTERNS) -> list[str]:
@@ -107,8 +107,10 @@ def test_required_secret_patterns_present():
 def test_missing_pattern_predicate_reports_stripped_pattern():
     """If `*.pem` is stripped from the block, the predicate must report it missing —
     otherwise the guard above would pass trivially and give false assurance."""
+    text = _gitignore_text()
+    assert "*.pem" not in missing_baseline_patterns(text), "*.pem must be present in the baseline to test stripping it"
     stripped = "\n".join(
-        line for line in _gitignore_text().splitlines() if line.strip() != "*.pem"
+        line for line in text.splitlines() if line.strip() != "*.pem"
     )
     assert "*.pem" in missing_baseline_patterns(stripped)
 
