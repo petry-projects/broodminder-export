@@ -213,6 +213,10 @@ def main() -> int:
         except RateLimited as ex:
             print(f"\n⏸  rate limited by server ({ex.status}). Saving and exiting; resume later.")
             stopped_early = True
+        except ValueError as ex:
+            save_manifest()
+            print(f"\n✗ unsafe path: {ex}", file=sys.stderr)
+            return 2
         except BroodMinderError as ex:
             save_manifest()
             print(f"\n✗ API error: {ex}", file=sys.stderr)

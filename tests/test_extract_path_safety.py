@@ -11,6 +11,7 @@ behavior so the guard can't silently regress.
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -19,8 +20,13 @@ ROOT = Path(__file__).resolve().parent.parent
 _SPEC = importlib.util.spec_from_file_location(
     "extract_all", ROOT / "scripts" / "extract_all.py"
 )
+assert _SPEC is not None and _SPEC.loader is not None, "extract_all spec/loader not found"
 extract_all = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(extract_all)
+_sys_path_snapshot = sys.path[:]
+try:
+    _SPEC.loader.exec_module(extract_all)
+finally:
+    sys.path[:] = _sys_path_snapshot
 resolve_within = extract_all.resolve_within
 
 
