@@ -45,7 +45,7 @@ jobs:
       - name: Run tests
         # Live contract tests skip automatically without BROODMINDER_API_KEY,
         # so CI validates collection + offline paths and stays green.
-        run: python -m pytest -q
+        run: python -m pytest -q --cov=bm --cov=scripts --cov-report=xml
 
   secret-scan:
     name: Secret scan (gitleaks)
