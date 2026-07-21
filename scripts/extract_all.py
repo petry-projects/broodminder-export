@@ -39,6 +39,10 @@ from bm.client import (  # noqa: E402
 )
 
 
+class UnsafePathError(ValueError):
+    pass
+
+
 def resolve_within(base: Path, *parts: str) -> Path:
     """Join untrusted *parts onto base and prove the result stays inside base.
 
@@ -53,8 +57,8 @@ def resolve_within(base: Path, *parts: str) -> Path:
     target = base_resolved.joinpath(*parts).resolve()
     try:
         target.relative_to(base_resolved)
-    except ValueError:
-        raise ValueError(f"path escapes {base_resolved}: {parts!r}")
+    except ValueError as exc:
+        raise UnsafePathError(f"path escapes {base_resolved}: {parts!r}") from exc
     return target
 
 
@@ -213,7 +217,7 @@ def main() -> int:
         except RateLimited as ex:
             print(f"\n⏸  rate limited by server ({ex.status}). Saving and exiting; resume later.")
             stopped_early = True
-        except ValueError as ex:
+        except UnsafePathError as ex:
             save_manifest()
             print(f"\n✗ unsafe path: {ex}", file=sys.stderr)
             return 2
