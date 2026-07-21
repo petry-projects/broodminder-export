@@ -407,6 +407,7 @@ node_modules/
 dist/
 build/
 coverage/
+coverage.xml
 
 # Logs / env
 *.log
@@ -417,6 +418,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 *.egg-info/
+.coverage
 
 # Your extracted hive data — stays local, never committed
 data/

@@ -28,6 +28,15 @@ markers = [
     "live: test hits the live BroodMinder API; skipped without BROODMINDER_API_KEY",
 ]
 
+[tool.coverage.run]
+branch = true
+source = ["bm", "scripts"]
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_covered = false
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"

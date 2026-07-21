@@ -42,10 +42,10 @@ jobs:
         run: pip install -r requirements.txt
       - name: Compile sources
         run: python -m compileall bm scripts
-      - name: Run tests
+      - name: Run tests with coverage
         # Live contract tests skip automatically without BROODMINDER_API_KEY,
         # so CI validates collection + offline paths and stays green.
-        run: python -m pytest -q
+        run: python -m pytest -q --cov=bm --cov=scripts --cov-report=xml --cov-report=term
 
   secret-scan:
     name: Secret scan (gitleaks)
