@@ -407,6 +407,7 @@ node_modules/
 dist/
 build/
 coverage/
+coverage.xml
 
 # Logs / env
 *.log
