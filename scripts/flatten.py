@@ -112,7 +112,7 @@ def accumulate_coverage(coverage: dict, row: dict) -> None:
     c["devices"].add(row["deviceId"])
     c["positions"].add(row["positionID"])
     ts = row["timestamp"]
-    if ts:
+    if ts is not None:
         c["min_ts"] = ts if c["min_ts"] is None else min(c["min_ts"], ts)
         c["max_ts"] = ts if c["max_ts"] is None else max(c["max_ts"], ts)
 
@@ -145,8 +145,8 @@ def build_coverage(coverage: dict, meta: dict) -> dict:
             "rows": c["rows"],
             "devices": sorted(d for d in c["devices"] if d),
             "positions": sorted(p for p in c["positions"] if p),
-            "earliest": datetime.fromtimestamp(c["min_ts"], tz=timezone.utc).isoformat() if c["min_ts"] else None,
-            "latest": datetime.fromtimestamp(c["max_ts"], tz=timezone.utc).isoformat() if c["max_ts"] else None,
+            "earliest": datetime.fromtimestamp(c["min_ts"], tz=timezone.utc).isoformat() if c["min_ts"] is not None else None,
+            "latest": datetime.fromtimestamp(c["max_ts"], tz=timezone.utc).isoformat() if c["max_ts"] is not None else None,
         }
     return cov_out
 

@@ -33,7 +33,11 @@ def first(obj, *keys):
 
 
 def find_sample_ids(apiaries):
-    """Walk the apiary tree and return the first (hive_id, device_id) pair.
+    """Walk the apiary tree and return the first hive_id and first device_id found.
+
+    Each is found independently: hive_id is the first hive encountered, while
+    device_id is the first device encountered across any hive, so they may come
+    from different hives if an earlier hive has no devices.
 
     Tolerates the two payload shapes (a bare list or a {"apiaries": [...]}
     wrapper) and the schema's key aliases (hiveId/id, deviceId/id, etc.).

@@ -123,3 +123,30 @@ def test_build_row_zero_timestamp_gives_epoch_datetime():
 def test_build_row_missing_metrics_has_no_metric_columns():
     row = flatten.build_row("H1", {}, "P1", {"deviceId": "D1", "timestamp": 1})
     assert not any(k.startswith("m_") for k in row)
+
+
+# ---------------------------------------------------------------------------
+# flatten.accumulate_coverage
+# ---------------------------------------------------------------------------
+def test_accumulate_coverage_zero_timestamp():
+    from collections import defaultdict
+    coverage = defaultdict(lambda: {"rows": 0, "min_ts": None, "max_ts": None,
+                                    "devices": set(), "positions": set()})
+    row = {"hiveId": "H1", "deviceId": "D1", "positionID": "P1", "timestamp": 0}
+    flatten.accumulate_coverage(coverage, row)
+    assert coverage["H1"]["min_ts"] == 0
+    assert coverage["H1"]["max_ts"] == 0
+    assert coverage["H1"]["rows"] == 1
+
+
+# ---------------------------------------------------------------------------
+# flatten.build_coverage
+# ---------------------------------------------------------------------------
+def test_build_coverage_zero_timestamp():
+    coverage = {
+        "H1": {"rows": 1, "min_ts": 0, "max_ts": 0, "devices": {"D1"}, "positions": {"P1"}}
+    }
+    meta = {"H1": {"apiaryName": "Apiary1", "hiveName": "Hive1"}}
+    out = flatten.build_coverage(coverage, meta)
+    assert out["H1"]["earliest"] == "1970-01-01T00:00:00+00:00"
+    assert out["H1"]["latest"] == "1970-01-01T00:00:00+00:00"
