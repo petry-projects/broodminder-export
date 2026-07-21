@@ -8,6 +8,7 @@ and guarantee the S3776 refactor preserved behavior exactly.
 from __future__ import annotations
 
 import gzip
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -16,12 +17,20 @@ from types import SimpleNamespace
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "scripts"))
 
-import discover  # noqa: E402
-import extract_all  # noqa: E402
-import flatten  # noqa: E402
+
+def _load_script(name: str):
+    path = ROOT / "scripts" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+discover = _load_script("discover")
+extract_all = _load_script("extract_all")
+flatten = _load_script("flatten")
 
 
 # ==========================================================================
@@ -128,7 +137,8 @@ def test_fetch_window_writes_and_counts(tmp_path):
     assert rec["notes"] == 1
     assert rec["apiaryId"] == "A"
     # files written, gz-readable
-    r = json.loads(gzip.open(hdir / "0-100.readings.json.gz", "rt").read())
+    with gzip.open(hdir / "0-100.readings.json.gz", "rt") as fh:
+        r = json.load(fh)
     assert r == readings
     assert (hdir / "0-100.notes.json.gz").exists()
 
