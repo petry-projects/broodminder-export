@@ -39,6 +39,29 @@ from bm.client import (  # noqa: E402
 )
 
 
+class UnsafePathError(ValueError):
+    pass
+
+
+def resolve_within(base: Path, *parts: str) -> Path:
+    """Join untrusted *parts onto base and prove the result stays inside base.
+
+    Both the ``--out`` directory (a CLI argument) and the hive id (external API
+    data) flow into the raw-write paths. A component containing ``..`` or an
+    absolute path would otherwise let a write escape the extract directory and
+    clobber arbitrary files (pythonsecurity:S8707). Resolve the candidate and
+    fail closed if it lands outside ``base`` — real ids and window filenames
+    never trip this, so behavior is unchanged for legitimate input.
+    """
+    base_resolved = base.resolve()
+    target = base_resolved.joinpath(*parts).resolve()
+    try:
+        target.relative_to(base_resolved)
+    except ValueError as exc:
+        raise UnsafePathError(f"path escapes {base_resolved}: {parts!r}") from exc
+    return target
+
+
 def write_gz(path: Path, obj) -> None:
     """Write a JSON object gzip-compressed (raw hive data is highly repetitive
     and the spike disk is small — gzip shrinks it ~19x)."""
@@ -98,7 +121,10 @@ def main() -> int:
     else:
         end = now_epoch() // 86400 * 86400
     window = args.window_days * 24 * 60 * 60
-    out = Path(args.out)
+    # Normalize the CLI-supplied output root once; every write below is proven
+    # (via resolve_within) to stay inside it, so a hostile --out or hive id
+    # can't traverse out of the extract tree (pythonsecurity:S8707).
+    out = Path(args.out).resolve()
     raw = out / "raw"
     out.mkdir(parents=True, exist_ok=True)
     manifest_path = out / "manifest.json"
@@ -130,7 +156,9 @@ def main() -> int:
 
             for a, h in hives:
                 hid = h["hiveId"]
-                hdir = raw / hid
+                # hid comes straight from the API — treat it as untrusted and
+                # confine the per-hive dir to the extract root.
+                hdir = resolve_within(raw, hid)
                 wins = list(iter_windows(start, end, window))
                 if args.reverse:
                     wins.reverse()
@@ -189,6 +217,10 @@ def main() -> int:
         except RateLimited as ex:
             print(f"\n⏸  rate limited by server ({ex.status}). Saving and exiting; resume later.")
             stopped_early = True
+        except UnsafePathError as ex:
+            save_manifest()
+            print(f"\n✗ unsafe path: {ex}", file=sys.stderr)
+            return 2
         except BroodMinderError as ex:
             save_manifest()
             print(f"\n✗ API error: {ex}", file=sys.stderr)
