@@ -38,7 +38,7 @@ def find_sample_ids(apiaries):
     Tolerates the two payload shapes (a bare list or a {"apiaries": [...]}
     wrapper) and the schema's key aliases (hiveId/id, deviceId/id, etc.).
     """
-    containers = apiaries if isinstance(apiaries, list) else apiaries.get("apiaries", [])
+    containers = apiaries if isinstance(apiaries, list) else (apiaries or {}).get("apiaries", [])
     hive_id = device_id = None
     for ap in containers or []:
         for hv in first(ap, "hives") or []:

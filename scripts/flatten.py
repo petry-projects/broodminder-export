@@ -84,7 +84,7 @@ def build_row(hid: str, m: dict, pid, r: dict) -> dict:
         "hiveId": hid, "hiveName": m.get("hiveName"),
         "positionID": pid, "deviceId": r.get("deviceId"),
         "timestamp": ts,
-        "datetime": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat() if ts else None,
+        "datetime": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat() if ts is not None else None,
         "batteryLevel": r.get("batteryLevel"),
         "chargeRemaining": r.get("chargeRemaining"),
         **{f"m_{k}": v for k, v in metrics.items()},
@@ -120,7 +120,7 @@ def accumulate_coverage(coverage: dict, row: dict) -> None:
 def write_notes(path: Path, meta: dict) -> int:
     """Notes are small — flatten them to plain ndjson. Returns the row count."""
     n_notes = 0
-    with path.open("w") as fh:
+    with path.open("w", encoding="utf-8") as fh:
         for hdir in sorted(RAW.iterdir()):
             if not hdir.is_dir():
                 continue

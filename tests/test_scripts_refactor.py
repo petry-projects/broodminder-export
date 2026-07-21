@@ -51,6 +51,7 @@ def test_find_sample_ids_hive_without_devices():
 def test_find_sample_ids_empty():
     assert discover.find_sample_ids([]) == (None, None)
     assert discover.find_sample_ids({"apiaries": []}) == (None, None)
+    assert discover.find_sample_ids(None) == (None, None)
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +112,12 @@ def test_build_row_null_timestamp_gives_null_datetime():
     row = flatten.build_row("H1", {}, "P1", {"deviceId": "D1", "timestamp": None})
     assert row["timestamp"] is None
     assert row["datetime"] is None
+
+
+def test_build_row_zero_timestamp_gives_epoch_datetime():
+    row = flatten.build_row("H1", {}, "P1", {"deviceId": "D1", "timestamp": 0})
+    assert row["timestamp"] == 0
+    assert row["datetime"] == "1970-01-01T00:00:00+00:00"
 
 
 def test_build_row_missing_metrics_has_no_metric_columns():
