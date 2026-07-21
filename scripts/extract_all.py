@@ -39,6 +39,23 @@ from bm.client import (  # noqa: E402
 )
 
 
+def resolve_within(base: Path, *parts: str) -> Path:
+    """Join untrusted *parts onto base and prove the result stays inside base.
+
+    Both the ``--out`` directory (a CLI argument) and the hive id (external API
+    data) flow into the raw-write paths. A component containing ``..`` or an
+    absolute path would otherwise let a write escape the extract directory and
+    clobber arbitrary files (pythonsecurity:S8707). Resolve the candidate and
+    fail closed if it lands outside ``base`` — real ids and window filenames
+    never trip this, so behavior is unchanged for legitimate input.
+    """
+    base_resolved = base.resolve()
+    target = base_resolved.joinpath(*parts).resolve()
+    if target != base_resolved and not target.is_relative_to(base_resolved):
+        raise ValueError(f"path escapes {base_resolved}: {parts!r}")
+    return target
+
+
 def write_gz(path: Path, obj) -> None:
     """Write a JSON object gzip-compressed (raw hive data is highly repetitive
     and the spike disk is small — gzip shrinks it ~19x)."""
@@ -98,7 +115,10 @@ def main() -> int:
     else:
         end = now_epoch() // 86400 * 86400
     window = args.window_days * 24 * 60 * 60
-    out = Path(args.out)
+    # Normalize the CLI-supplied output root once; every write below is proven
+    # (via resolve_within) to stay inside it, so a hostile --out or hive id
+    # can't traverse out of the extract tree (pythonsecurity:S8707).
+    out = Path(args.out).resolve()
     raw = out / "raw"
     out.mkdir(parents=True, exist_ok=True)
     manifest_path = out / "manifest.json"
@@ -130,7 +150,9 @@ def main() -> int:
 
             for a, h in hives:
                 hid = h["hiveId"]
-                hdir = raw / hid
+                # hid comes straight from the API — treat it as untrusted and
+                # confine the per-hive dir to the extract root.
+                hdir = resolve_within(raw, hid)
                 wins = list(iter_windows(start, end, window))
                 if args.reverse:
                     wins.reverse()
@@ -157,12 +179,12 @@ def main() -> int:
                     rec = {"apiaryId": a.get("apiaryId"), "apiaryName": a.get("name"),
                            "hiveName": h.get("name")}
                     readings = bm.hive_readings(hid, s, e)
-                    write_gz(hdir / f"{s}-{e}.readings.json.gz", readings)
+                    write_gz(resolve_within(hdir, f"{s}-{e}.readings.json.gz"), readings)
                     rec["reading_rows"] = count_reading_rows(readings)
 
                     if not args.no_notes:
                         notes = bm.hive_notes(hid, s, e)
-                        write_gz(hdir / f"{s}-{e}.notes.json.gz", notes)
+                        write_gz(resolve_within(hdir, f"{s}-{e}.notes.json.gz"), notes)
                         rec["notes"] = count_notes(notes)
 
                     completed[key] = rec
