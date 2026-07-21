@@ -51,7 +51,9 @@ def resolve_within(base: Path, *parts: str) -> Path:
     """
     base_resolved = base.resolve()
     target = base_resolved.joinpath(*parts).resolve()
-    if target != base_resolved and not target.is_relative_to(base_resolved):
+    try:
+        target.relative_to(base_resolved)
+    except ValueError:
         raise ValueError(f"path escapes {base_resolved}: {parts!r}")
     return target
 
@@ -179,12 +181,12 @@ def main() -> int:
                     rec = {"apiaryId": a.get("apiaryId"), "apiaryName": a.get("name"),
                            "hiveName": h.get("name")}
                     readings = bm.hive_readings(hid, s, e)
-                    write_gz(resolve_within(hdir, f"{s}-{e}.readings.json.gz"), readings)
+                    write_gz(hdir / f"{s}-{e}.readings.json.gz", readings)
                     rec["reading_rows"] = count_reading_rows(readings)
 
                     if not args.no_notes:
                         notes = bm.hive_notes(hid, s, e)
-                        write_gz(resolve_within(hdir, f"{s}-{e}.notes.json.gz"), notes)
+                        write_gz(hdir / f"{s}-{e}.notes.json.gz", notes)
                         rec["notes"] = count_notes(notes)
 
                     completed[key] = rec
