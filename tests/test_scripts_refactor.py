@@ -15,6 +15,8 @@ from collections import defaultdict
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT))
@@ -85,6 +87,13 @@ def test_select_apiaries_by_id_exact():
 
 def test_select_apiaries_no_match_is_empty():
     assert extract_all.select_apiaries(_APIARIES, ["nope"]) == []
+
+
+def test_select_apiaries_normalizes_wrapped_dict():
+    wrapped = {"apiaries": _APIARIES}
+    assert extract_all.select_apiaries(wrapped, []) == _APIARIES
+    got = extract_all.select_apiaries(wrapped, ["north yard"])
+    assert [a["apiaryId"] for a in got] == ["A1"]
 
 
 # ---------------------------------------------------------------------------
@@ -267,14 +276,13 @@ def test_iter_hive_rows_deduplicates(tmp_path):
 # ---------------------------------------------------------------------------
 # flatten.write_notes
 # ---------------------------------------------------------------------------
-def test_write_notes(tmp_path, monkeypatch):
+def test_write_notes(tmp_path):
     hdir = tmp_path / "H1"
     hdir.mkdir()
     notes_data = [{"text": "a note", "date": "2024-01-01"}]
     (hdir / "w.notes.json").write_text(json.dumps(notes_data), encoding="utf-8")
-    monkeypatch.setattr(flatten, "RAW", tmp_path)
     out_file = tmp_path / "notes.ndjson"
-    n = flatten.write_notes(out_file, {"H1": {"hiveName": "Hive-1"}})
+    n = flatten.write_notes(out_file, {"H1": {"hiveName": "Hive-1"}}, raw=tmp_path)
     assert n == 1
     line = json.loads(out_file.read_text(encoding="utf-8").strip())
     assert line["hiveId"] == "H1"
@@ -399,9 +407,9 @@ def test_sample_error(capsys):
         raise BroodMinderError(404, "GET", "/x", "not found")
 
     discover._sample(out, "label", bad_fetch, "ok", "err", "msg", 100)
-    assert "boom" not in out.get("err", "")
     assert "ok" not in out
     assert "err" in out
+    assert "not found" in out["err"]
 
 
 # ---------------------------------------------------------------------------
@@ -454,7 +462,6 @@ def test_process_hive_skips_completed(tmp_path):
 
 
 def test_process_hive_stops_at_budget(tmp_path):
-    import pytest as _pytest
     bm = MagicMock()
     bm.call_count = 900
     bm.hive_readings.return_value = []
@@ -466,7 +473,7 @@ def test_process_hive_stops_at_budget(tmp_path):
     args.stop_after_empty = 0
     args.max_calls = 900
     args.no_notes = True
-    with _pytest.raises(StopIteration):
+    with pytest.raises(extract_all._BudgetExhausted):
         extract_all.process_hive(bm, a, h, wins, args, tmp_path, completed, lambda: None)
 
 

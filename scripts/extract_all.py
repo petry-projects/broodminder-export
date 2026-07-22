@@ -93,9 +93,15 @@ def load_manifest(path: Path) -> dict:
     return {"completed": {}, "meta": {}}
 
 
-def select_apiaries(apiaries: list, filters: list) -> list:
+class _BudgetExhausted(Exception):
+    """Raised by process_hive when the call budget is reached; caught in main."""
+
+
+def select_apiaries(apiaries, filters: list) -> list:
     """Filter apiaries by name (case-insensitive) or exact apiaryId. No filters
-    means keep them all."""
+    means keep them all. Normalizes both bare-list and wrapped-dict payloads."""
+    if isinstance(apiaries, dict):
+        apiaries = apiaries.get("apiaries", [])
     if not filters:
         return apiaries
     wanted = {a.lower() for a in filters}
@@ -143,8 +149,8 @@ def process_hive(bm, a: dict, h: dict, wins: list, args, raw: Path,
                  completed: dict, save_manifest) -> None:
     """Walk one hive's windows, fetching+recording the not-yet-completed ones.
 
-    Raises StopIteration when the call budget is reached (the caller stops the
-    whole run and exits resumably).
+    Raises _BudgetExhausted when the call budget is reached (the caller stops
+    the whole run and exits resumably).
     """
     hid = h["hiveId"]
     # hid comes from the API — treat as untrusted; confine to extract root (pythonsecurity:S8707).
@@ -162,7 +168,7 @@ def process_hive(bm, a: dict, h: dict, wins: list, args, raw: Path,
             continue
         if bm.call_count >= args.max_calls:
             print(f"\n⏸  budget reached ({bm.call_count} calls). Resume later.")
-            raise StopIteration
+            raise _BudgetExhausted
 
         rec = fetch_window(bm, a, h, hid, s, e, hdir, args)
         completed[key] = rec
@@ -238,7 +244,7 @@ def main() -> int:
             hive_wins = list(reversed(wins)) if args.reverse else wins
             for a, h in hives:
                 process_hive(bm, a, h, hive_wins, args, raw, completed, save_manifest)
-        except StopIteration:
+        except _BudgetExhausted:
             stopped_early = True
         except RateLimited as ex:
             print(f"\n⏸  rate limited by server ({ex.status}). Saving and exiting; resume later.")

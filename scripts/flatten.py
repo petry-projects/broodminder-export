@@ -105,7 +105,7 @@ def iter_hive_rows(hdir: Path, m: dict):
         yield build_row(hid, m, pid, r)
 
 
-def accumulate_coverage(coverage: dict, row: dict) -> None:
+def accumulate_coverage(coverage: defaultdict, row: dict) -> None:
     """Fold one output row into the per-hive coverage tally."""
     c = coverage[row["hiveId"]]
     c["rows"] += 1
@@ -117,11 +117,11 @@ def accumulate_coverage(coverage: dict, row: dict) -> None:
         c["max_ts"] = ts if c["max_ts"] is None else max(c["max_ts"], ts)
 
 
-def write_notes(path: Path, meta: dict) -> int:
+def write_notes(path: Path, meta: dict, raw: Path = RAW) -> int:
     """Notes are small — flatten them to plain ndjson. Returns the row count."""
     n_notes = 0
     with path.open("w", encoding="utf-8") as fh:
-        for hdir in sorted(RAW.iterdir()):
+        for hdir in sorted(raw.iterdir()):
             if not hdir.is_dir():
                 continue
             hid = hdir.name
@@ -167,7 +167,8 @@ def main() -> int:
                  "deviceId", "timestamp", "datetime", "batteryLevel", "chargeRemaining"]
 
     # Pass 1: discover metric keys (stable, tiny set) so CSV has a fixed header.
-    metric_keys = discover_metric_keys(RAW)
+    # Skip this full scan when CSV output is disabled — the header isn't needed.
+    metric_keys = discover_metric_keys(RAW) if not args.no_csv else set()
     metric_cols = [f"m_{k}" for k in sorted(metric_keys)]
 
     # Pass 2: stream rows to gzipped ndjson (+ optional gzipped csv).

@@ -49,6 +49,12 @@ def find_sample_ids(apiaries):
             hive_id = hive_id or first(hv, "hiveId", "id", "hiveID")
             for dv in first(hv, "devices", "positions") or []:
                 device_id = device_id or first(dv, "deviceId", "id", "deviceID")
+                if device_id:
+                    break
+            if hive_id and device_id:
+                break
+        if hive_id and device_id:
+            break
     return hive_id, device_id
 
 

@@ -49,7 +49,6 @@ jobs:
         run: pip install -r requirements.txt
       - name: Generate coverage report
         run: python -m pytest --cov=bm --cov=scripts --cov-report=xml:coverage.xml -q
-        continue-on-error: true
       - name: SonarCloud Scan
         id: sonar
         if: env.SONAR_TOKEN != ''
