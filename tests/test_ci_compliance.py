@@ -26,8 +26,9 @@ CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 GITLEAKS_CONFIG = ROOT / ".gitleaks.toml"
 DEV_LEAD_WORKFLOW = ROOT / ".github" / "workflows" / "dev-lead.yml"
 
-# A dev-lead channel is `stable`, `next`, or `ring<N>` (see ci-standards.md).
-DEV_LEAD_CHANNEL = re.compile(r"^dev-lead/(stable|next|ring\d+)$")
+# A dev-lead channel is `stable`, `next`, `ring<N>`, or the versioned
+# `v<N>-stable` / `v<N>-next` / `v<N>-ring<M>` form (see ci-standards.md).
+DEV_LEAD_CHANNEL = re.compile(r"^dev-lead/(v\d+-)?(stable|next|ring\d+)$")
 
 
 def _ci_text() -> str:
@@ -68,14 +69,15 @@ def _dev_lead_text() -> str:
 
 def test_dev_lead_stub_passes_valid_agent_ref():
     """The stub must pass `with: agent_ref: dev-lead/<channel>` where the
-    channel is `stable`, `next`, or `ring<N>` (ci-standards.md#dev-lead-agent)."""
+    channel is `stable`, `next`, `ring<N>`, or the versioned `v<N>-stable` /
+    `v<N>-next` / `v<N>-ring<M>` form (ci-standards.md#dev-lead-agent)."""
     text = _dev_lead_text()
     m = re.search(r"^\s*agent_ref:\s*['\"]?([^'\"\s]+)['\"]?\s*$", text, re.MULTILINE)
     assert m, "dev-lead.yml must pass `with: agent_ref: dev-lead/<channel>`"
     ref = m.group(1)
     assert DEV_LEAD_CHANNEL.match(ref), (
         f"agent_ref '{ref}' must be a valid dev-lead channel "
-        "(dev-lead/stable, dev-lead/next, or dev-lead/ring<N>)"
+        "(dev-lead/stable, dev-lead/next, dev-lead/ring<N>, or versioned dev-lead/v<N>-<channel>)"
     )
 
 
