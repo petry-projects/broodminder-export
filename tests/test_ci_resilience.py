@@ -25,13 +25,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 
-# A step block starts at a 6-space-indented `- name:` and runs until the next one.
-_STEP_SPLIT = re.compile(r"^      - name:", re.MULTILINE)
+# A step block starts at an indented `- name:` and runs until the next one.
+_STEP_SPLIT = re.compile(r"^\s+- name:", re.MULTILINE)
 
 
 def _ci_text() -> str:
     assert CI_WORKFLOW.exists(), f"{CI_WORKFLOW} is missing"
-    return CI_WORKFLOW.read_text()
+    return CI_WORKFLOW.read_text(encoding="utf-8")
 
 
 def _step_containing(text: str, needle: str) -> str:
