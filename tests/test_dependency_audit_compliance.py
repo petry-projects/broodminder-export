@@ -67,9 +67,6 @@ def requirements_violations(text: str) -> list[str]:
     if not text.strip():
         return ["requirements file is empty"]
 
-    if REQUIRED_PIN not in text:
-        violations.append(f"missing exact pin for pip-audit ('{REQUIRED_PIN}')")
-
     # Split into logical requirement blocks: each starts at a `name==` line and
     # runs until the next one, gathering its trailing `--hash=` continuation lines.
     blocks: list[tuple[str, list[str]]] = []
@@ -90,6 +87,12 @@ def requirements_violations(text: str) -> list[str]:
 
     if not blocks:
         violations.append("no pinned requirements found")
+
+    # Validate pip-audit is present as an actual pinned requirement (not just in a
+    # comment), by checking parsed block names rather than raw text.
+    _norm = lambda n: re.sub(r"[-_.]+", "-", n).lower()
+    if not any(_norm(name) == "pip-audit" for name, _ in blocks):
+        violations.append(f"missing exact pin for pip-audit ('{REQUIRED_PIN}')")
 
     for name, lines in blocks:
         if not any(_HASH.search(line) for line in lines):
@@ -129,6 +132,17 @@ def test_predicate_flags_missing_file_content():
 def test_predicate_flags_missing_pip_audit_pin():
     # A validly-hashed but wrong package (no pip-audit) must be rejected.
     text = (
+        "requests==2.34.2 \\\n"
+        "    --hash=sha256:" + "a" * 64 + "\n"
+    )
+    violations = requirements_violations(text)
+    assert any("pip-audit" in v for v in violations), violations
+
+
+def test_predicate_flags_pip_audit_pin_in_comment_only():
+    # A comment containing 'pip-audit==' must not satisfy the pip-audit pin guard.
+    text = (
+        "# pip-audit==2.9.0 must be pinned\n"
         "requests==2.34.2 \\\n"
         "    --hash=sha256:" + "a" * 64 + "\n"
     )
