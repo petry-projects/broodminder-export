@@ -45,11 +45,13 @@ jobs:
             if pip install -r requirements.txt; then
               exit 0
             fi
+            if [ "${attempt}" -eq 3 ]; then
+              echo "::error::pip install failed after 3 attempts" >&2
+              exit 1
+            fi
             echo "::warning::pip install failed (attempt ${attempt}/3); retrying in $((attempt * 5))s" >&2
             sleep "$((attempt * 5))"
           done
-          echo "::error::pip install failed after 3 attempts" >&2
-          exit 1
       - name: Compile sources
         run: python -m compileall bm scripts
       - name: Run tests with coverage

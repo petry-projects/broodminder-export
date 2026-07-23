@@ -49,7 +49,7 @@ def _step_containing(text: str, needle: str) -> str:
 
 def _has_retry_loop(block: str) -> bool:
     """True when the step's shell retries with a bounded loop and a backoff sleep."""
-    looped = bool(re.search(r"\bfor\s+attempt\s+in\b", block) or re.search(r"\buntil\b", block))
+    looped = bool(re.search(r"\bfor\s+\w+\s+in\b", block) or re.search(r"\buntil\b", block))
     backed_off = "sleep" in block
     return looped and backed_off
 
@@ -85,5 +85,15 @@ def test_gitleaks_download_step_retries():
 def test_network_steps_still_run_underlying_commands():
     """Retries must *wrap* the real commands, not replace them."""
     text = _ci_text()
-    assert "pip install -r requirements.txt" in text
-    assert "wget" in text and "gitleaks.tar.gz" in text
+    pip_block = _step_containing(text, "pip install -r requirements.txt")
+    pip_run = "\n".join(ln for ln in pip_block.splitlines() if not ln.lstrip().startswith("#"))
+    assert "pip install -r requirements.txt" in pip_run, (
+        "the `Install dependencies` step must execute `pip install -r requirements.txt` "
+        "(not just reference it in a comment)"
+    )
+    gitleaks_block = _step_containing(text, "gitleaks.tar.gz")
+    gitleaks_run = "\n".join(ln for ln in gitleaks_block.splitlines() if not ln.lstrip().startswith("#"))
+    assert "wget" in gitleaks_run and "gitleaks.tar.gz" in gitleaks_run, (
+        "the `Install gitleaks` step must execute `wget` to download `gitleaks.tar.gz` "
+        "(not just reference them in comments)"
+    )
