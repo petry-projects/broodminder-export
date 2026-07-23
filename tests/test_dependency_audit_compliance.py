@@ -80,11 +80,13 @@ def requirements_violations(text: str) -> list[str]:
         m = _PIN_LINE.match(stripped)
         if m:
             blocks.append((m.group("name"), [stripped]))
-        elif blocks:
-            blocks[-1][1].append(stripped)
-        elif "==" not in stripped and "--hash" not in stripped:
-            # A non-comment line before any pin that isn't a pin itself.
-            violations.append(f"unpinned requirement line: {stripped!r}")
+        elif stripped.startswith("--hash"):
+            if blocks:
+                blocks[-1][1].append(stripped)
+            else:
+                violations.append(f"hash line without requirement: {stripped!r}")
+        else:
+            violations.append(f"unpinned requirement or invalid line: {stripped!r}")
 
     if not blocks:
         violations.append("no pinned requirements found")
@@ -138,6 +140,25 @@ def test_predicate_flags_requirement_without_hash():
     text = "pip-audit==2.9.0\nrequests==2.34.2\n"
     violations = requirements_violations(text)
     assert any("requests" in v and "hash" in v for v in violations), violations
+
+
+def test_predicate_flags_unpinned_line_after_pinned_block():
+    # Regression: an unpinned name after a valid hash-pinned block must be flagged,
+    # not silently merged into the preceding block's hash list.
+    text = (
+        "pip-audit==2.9.0 \\\n"
+        "    --hash=sha256:" + "b" * 64 + "\n"
+        "requests\n"
+    )
+    violations = requirements_violations(text)
+    assert any("requests" in v for v in violations), violations
+
+
+def test_predicate_flags_hash_line_without_requirement():
+    # A bare --hash line before any pinned block is not valid.
+    text = "--hash=sha256:" + "c" * 64 + "\npip-audit==2.9.0 \\\n    --hash=sha256:" + "d" * 64 + "\n"
+    violations = requirements_violations(text)
+    assert any("hash line without requirement" in v for v in violations), violations
 
 
 def test_predicate_accepts_the_real_file():
