@@ -21,6 +21,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 GITLEAKS_CONFIG = ROOT / ".gitleaks.toml"
@@ -57,6 +59,59 @@ def test_gitleaks_config_present():
     assert GITLEAKS_CONFIG.exists(), ".gitleaks.toml must exist at the repo root"
     text = GITLEAKS_CONFIG.read_text()
     assert "[allowlist]" in text, ".gitleaks.toml must define an [allowlist] section"
+
+
+# --- dev-lead channel-form regression guard (issue #67) -----------------------
+#
+# The flaky `.github/workflows/sonarcloud.yml` failures flagged by Fleet Monitor
+# (issue #67) were pytest failures, not SonarCloud endpoint flakiness: an org
+# standards-sync updated `dev-lead.yml` to the versioned channel
+# `dev-lead/v1-stable` before DEV_LEAD_CHANNEL was broadened to accept the
+# `v<N>-` form. Because sonarcloud.yml (and ci.yml) run the full suite to
+# generate coverage, that mismatch surfaced as a "SonarCloud" workflow failure.
+#
+# These guards pin the accepted/rejected channel forms directly against the
+# regex so a future narrowing of DEV_LEAD_CHANNEL cannot silently reintroduce
+# that failure class — independent of whatever channel `dev-lead.yml` happens to
+# pin at any given moment.
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "dev-lead/stable",
+        "dev-lead/next",
+        "dev-lead/ring0",
+        "dev-lead/ring12",
+        "dev-lead/v1-stable",
+        "dev-lead/v2-next",
+        "dev-lead/v10-ring3",
+    ],
+)
+def test_dev_lead_channel_regex_accepts_supported_forms(ref):
+    assert DEV_LEAD_CHANNEL.match(ref), (
+        f"'{ref}' must be accepted as a valid dev-lead channel; narrowing "
+        "DEV_LEAD_CHANNEL to drop a supported form reintroduces issue #67"
+    )
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "dev-lead/",
+        "dev-lead/prod",
+        "dev-lead/v-stable",  # missing version number
+        "dev-lead/vstable",
+        "dev-lead/1-stable",  # missing 'v' prefix
+        "dev-lead/stable-v1",
+        "dev-lead/ring",  # ring without an ordinal
+        "release/stable",
+    ],
+)
+def test_dev_lead_channel_regex_rejects_malformed_forms(ref):
+    assert not DEV_LEAD_CHANNEL.match(ref), (
+        f"'{ref}' must not be accepted as a dev-lead channel; the gate must stay strict"
+    )
 
 
 # --- dev-lead caller-stub channel pin (dev-lead-stub-agent-ref) ---------------
