@@ -69,6 +69,15 @@ def test_gitleaks_download_step_retries():
         "the `Install gitleaks` step must retry the release download with backoff so a "
         "transient GitHub-Releases/CDN failure doesn't fail CI"
     )
+    # Verify the retry loop is bounded to exactly 3 attempts (not combined with wget's --tries).
+    assert "for attempt in 1 2 3" in block, (
+        "the `Install gitleaks` step must use `for attempt in 1 2 3` to bound retries to 3 total attempts"
+    )
+    # Verify wget uses --tries=1 so the loop controls all retries (no nested retry logic).
+    assert "--tries=1" in block, (
+        "wget invocation must use --tries=1 to limit each attempt to a single try, "
+        "letting the outer loop manage all retries"
+    )
     # Retry must not weaken supply-chain safety: the checksum is still verified.
     assert "sha256sum -c" in block, "gitleaks download must still verify the checksum after retrying"
 
