@@ -39,7 +39,19 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        # Retry with backoff so a transient PyPI/network hiccup doesn't fail CI.
+        run: |
+          for attempt in 1 2 3; do
+            if pip install -r requirements.txt; then
+              exit 0
+            fi
+            if [ "${attempt}" -eq 3 ]; then
+              echo "::error::pip install failed after 3 attempts" >&2
+              exit 1
+            fi
+            echo "::warning::pip install failed (attempt ${attempt}/3); retrying in $((attempt * 5))s" >&2
+            sleep "$((attempt * 5))"
+          done
       - name: Compile sources
         run: python -m compileall bm scripts
       - name: Run tests with coverage
@@ -69,7 +81,18 @@ jobs:
         run: |
           tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${tarball}"
-          wget -q "${url}" -O /tmp/gitleaks.tar.gz
+          # Retry with backoff so a transient GitHub-Releases/CDN failure doesn't fail CI.
+          for attempt in 1 2 3; do
+            if wget -q --tries=1 --timeout=30 --retry-connrefused "${url}" -O /tmp/gitleaks.tar.gz; then
+              break
+            fi
+            if [ "${attempt}" -eq 3 ]; then
+              echo "::error::gitleaks download failed after 3 attempts" >&2
+              exit 1
+            fi
+            echo "::warning::gitleaks download failed (attempt ${attempt}/3); retrying in $((attempt * 5))s" >&2
+            sleep "$((attempt * 5))"
+          done
           echo "${GITLEAKS_CHECKSUM}  /tmp/gitleaks.tar.gz" | sha256sum -c
           tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks
 
