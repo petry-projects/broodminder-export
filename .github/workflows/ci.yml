@@ -31,6 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      administration: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -55,8 +56,10 @@ jobs:
       - name: Compile sources
         run: python -m compileall bm scripts
       - name: Run tests with coverage
-        # Live contract tests skip automatically without BROODMINDER_API_KEY,
-        # so CI validates collection + offline paths and stays green.
+        # Live contract tests skip automatically without BROODMINDER_API_KEY.
+        # GH_TOKEN enables the live ruleset compliance check (issue #91).
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python -m pytest -q --cov=bm --cov=scripts --cov-report=xml --cov-report=term
 
   secret-scan:

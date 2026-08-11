@@ -48,9 +48,13 @@ def pr_rule_param_enabled(ruleset_json: dict, param: str) -> bool:
     ``True`` counts as enabled, so a missing rule or a truthy non-boolean (e.g. the
     string ``"true"``) is reported as non-compliant rather than silently passing.
     """
+    if not isinstance(ruleset_json, dict):
+        return False
     for rule in ruleset_json.get("rules", []) or []:
-        if rule.get("type") == "pull_request":
-            return (rule.get("parameters", {}) or {}).get(param, False) is True
+        if isinstance(rule, dict) and rule.get("type") == "pull_request":
+            params = rule.get("parameters")
+            if isinstance(params, dict):
+                return params.get(param, False) is True
     return False
 
 
@@ -96,6 +100,21 @@ def test_predicate_false_when_truthy_string():
     assert pr_rule_param_enabled(_ruleset_with_param("true"), PARAM) is False
 
 
+def test_predicate_false_when_ruleset_not_dict():
+    assert pr_rule_param_enabled([], PARAM) is False
+    assert pr_rule_param_enabled(None, PARAM) is False
+
+
+def test_predicate_false_when_rule_not_dict():
+    ruleset = {"name": RULESET_NAME, "rules": ["pull_request", None, 42]}
+    assert pr_rule_param_enabled(ruleset, PARAM) is False
+
+
+def test_predicate_false_when_parameters_not_dict():
+    ruleset = {"name": RULESET_NAME, "rules": [{"type": "pull_request", "parameters": "bad"}]}
+    assert pr_rule_param_enabled(ruleset, PARAM) is False
+
+
 # --- live guard against the real ruleset (skips without a token) --------------
 
 
@@ -124,17 +143,30 @@ def test_pr_quality_dismiss_stale_reviews_on_push_live():
     except httpx.HTTPError as exc:  # network unavailable — don't fail the suite
         pytest.skip(f"could not reach GitHub API: {exc}")
 
-    # Only a successful read lets us make a compliance judgement. Any other status
-    # (auth, not-found, rate limit, GitHub 5xx) means we *cannot verify*, so skip
-    # rather than fail the suite on transient/credential issues.
+    # Auth/permission failures mean the token is configured but unusable — that is a
+    # setup error, not a transient issue, so we fail rather than silently skip.
+    # Other non-200 responses (rate limit, GitHub 5xx, 404) are genuinely transient
+    # or environmental, so we skip to avoid false positives on unrelated outages.
+    _AUTH_ERRORS = {401, 403}
     if listing.status_code != 200:
+        if listing.status_code in _AUTH_ERRORS:
+            pytest.fail(
+                f"GitHub API returned HTTP {listing.status_code} listing {REPO_SLUG} rulesets; "
+                "verify the token has 'administration: read' permission"
+            )
         pytest.skip(
             f"could not list {REPO_SLUG} rulesets (HTTP {listing.status_code}); "
             "live ruleset check skipped"
         )
 
+    listing_data = listing.json()
+    if not isinstance(listing_data, list):
+        pytest.skip(
+            f"Unexpected response format from GitHub API (expected list, got {type(listing_data).__name__})"
+        )
+
     ruleset_id = next(
-        (rs.get("id") for rs in listing.json() if rs.get("name") == RULESET_NAME),
+        (rs.get("id") for rs in listing_data if isinstance(rs, dict) and rs.get("name") == RULESET_NAME),
         None,
     )
     assert ruleset_id is not None, (
@@ -153,6 +185,11 @@ def test_pr_quality_dismiss_stale_reviews_on_push_live():
         pytest.skip(f"could not reach GitHub API: {exc}")
 
     if detail.status_code != 200:
+        if detail.status_code in _AUTH_ERRORS:
+            pytest.fail(
+                f"GitHub API returned HTTP {detail.status_code} reading '{RULESET_NAME}' ruleset; "
+                "verify the token has 'administration: read' permission"
+            )
         pytest.skip(
             f"could not read '{RULESET_NAME}' ruleset detail (HTTP {detail.status_code}); "
             "live ruleset check skipped"
