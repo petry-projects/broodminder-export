@@ -92,7 +92,15 @@ def test_allow_auto_merge_enabled_live():
             "live repo-settings check skipped"
         )
 
-    resp_data = resp.json()
+    try:
+        resp_data = resp.json()
+    except ValueError as exc:
+        pytest.skip(f"could not parse {REPO_SLUG} API response: {exc}")
+    if not isinstance(resp_data, dict):
+        pytest.skip(
+            f"Unexpected response format from {REPO_SLUG} API response; "
+            "live repo-settings check skipped"
+        )
     if "allow_auto_merge" not in resp_data:
         pytest.skip(
             f"allow_auto_merge field absent from {REPO_SLUG} API response; "

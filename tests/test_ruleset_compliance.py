@@ -50,7 +50,10 @@ def pr_rule_param_enabled(ruleset_json: dict, param: str) -> bool:
     """
     if not isinstance(ruleset_json, dict):
         return False
-    for rule in ruleset_json.get("rules", []) or []:
+    rules = ruleset_json.get("rules")
+    if not isinstance(rules, list):
+        return False
+    for rule in rules:
         if isinstance(rule, dict) and rule.get("type") == "pull_request":
             params = rule.get("parameters")
             if isinstance(params, dict):
@@ -93,6 +96,10 @@ def test_predicate_false_when_pull_request_rule_missing():
 
 def test_predicate_false_when_rules_absent():
     assert pr_rule_param_enabled({"name": RULESET_NAME}, PARAM) is False
+
+
+def test_predicate_false_when_rules_scalar():
+    assert pr_rule_param_enabled({"rules": 1}, PARAM) is False
 
 
 def test_predicate_false_when_truthy_string():
@@ -152,7 +159,7 @@ def test_pr_quality_dismiss_stale_reviews_on_push_live():
         if listing.status_code in _AUTH_ERRORS:
             pytest.fail(
                 f"GitHub API returned HTTP {listing.status_code} listing {REPO_SLUG} rulesets; "
-                "verify the token has 'administration: read' permission"
+                "verify the token has 'Metadata' (read) repository permission"
             )
         pytest.skip(
             f"could not list {REPO_SLUG} rulesets (HTTP {listing.status_code}); "
@@ -191,7 +198,7 @@ def test_pr_quality_dismiss_stale_reviews_on_push_live():
         if detail.status_code in _AUTH_ERRORS:
             pytest.fail(
                 f"GitHub API returned HTTP {detail.status_code} reading '{RULESET_NAME}' ruleset; "
-                "verify the token has 'administration: read' permission"
+                "verify the token has 'Metadata' (read) repository permission"
             )
         pytest.skip(
             f"could not read '{RULESET_NAME}' ruleset detail (HTTP {detail.status_code}); "
