@@ -62,8 +62,8 @@ VALID_PERMISSION_SCOPES = frozenset(
 # colon. Inline forms (`permissions: {}`, `read-all`, `write-all`) carry no scope
 # keys and are always valid, so they intentionally do not match.
 _PERMISSIONS_HEADER = re.compile(r"^(?P<indent>\s*)permissions:\s*$")
-# A scope entry inside a block: `<key>: read|write|none`.
-_SCOPE_ENTRY = re.compile(r"^(?P<indent>\s+)(?P<key>[A-Za-z][\w-]*):\s*(read|write|none)\s*$")
+# A scope entry inside a block: `<key>: read|write|none`, with optional quotes around the value.
+_SCOPE_ENTRY = re.compile(r"^(?P<indent>\s+)(?P<key>[A-Za-z][\w-]*):\s*['\"]?(read|write|none)['\"]?\s*$")
 
 
 def _ci_text() -> str:
@@ -185,3 +185,25 @@ def test_guard_tolerates_valid_inline_permission_forms(form):
     text = f"name: CI\n{form}\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n"
     assert _permission_keys(text) == []
     assert _invalid_permission_keys(text) == []
+
+
+@pytest.mark.parametrize("value_form", ['read', '"read"', "'read'", 'write', '"write"', "'write'", 'none', '"none"', "'none'"])
+def test_guard_accepts_quoted_permission_values(value_form):
+    """The parser must accept permission values with optional quotes (single or double)."""
+    text = (
+        "name: CI\n"
+        "on:\n"
+        "  push:\n"
+        "    branches: [main]\n"
+        "permissions: {}\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    permissions:\n"
+        f"      contents: {value_form}\n"
+        "    steps:\n"
+        "      - run: true\n"
+    )
+    keys = _permission_keys(text)
+    assert "contents" in keys, f"parser must recognize permission with value form: {value_form}"
+    assert _invalid_permission_keys(text) == [], f"valid permissions must not be flagged for value form: {value_form}"
