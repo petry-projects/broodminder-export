@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from bm.client import BroodMinderClient, BroodMinderError, now_epoch  # noqa: E402
+from bm.client import BroodMinderClient, BroodMinderError, RateLimited, now_epoch  # noqa: E402
 
 DAY = 24 * 60 * 60
 OUT = Path(__file__).resolve().parent.parent / "data" / "discovery.json"
@@ -54,6 +54,8 @@ def sample_endpoint(out, key, header, err_label, fn, clip):
     print(header)
     try:
         data = fn()
+    except RateLimited:
+        raise
     except BroodMinderError as e:
         out[f"{key}_error"] = str(e)
         print(f"  {err_label} error: {e}")
