@@ -175,14 +175,18 @@ def test_pr_quality_dismiss_stale_reviews_on_push_live():
             f"Unexpected response format from GitHub API (expected list, got {type(listing_data).__name__})"
         )
 
-    ruleset_id = next(
-        (rs.get("id") for rs in listing_data if isinstance(rs, dict) and rs.get("name") == RULESET_NAME),
+    matching_ruleset = next(
+        (rs for rs in listing_data if isinstance(rs, dict) and rs.get("name") == RULESET_NAME),
         None,
     )
-    assert ruleset_id is not None, (
+    assert matching_ruleset is not None, (
         f"repository {REPO_SLUG} has no '{RULESET_NAME}' ruleset — the org standard "
         "requires it (github-settings.md#pr-quality); run "
         f"scripts/apply-rulesets.sh --repo {REPO_SLUG} to converge"
+    )
+    ruleset_id = matching_ruleset.get("id")
+    assert ruleset_id is not None, (
+        f"'{RULESET_NAME}' ruleset found but missing 'id' field (malformed API response)"
     )
 
     try:
