@@ -39,6 +39,24 @@ from bm.client import (  # noqa: E402
 )
 
 
+class UnsafePathError(ValueError):
+    """hiveId resolved outside the extraction root."""
+
+
+class BudgetExhausted(RuntimeError):
+    """The API-call budget was reached; the run stops and can be resumed."""
+
+
+def resolve_within(base: Path, *parts: str) -> Path:
+    base_resolved = base.resolve()
+    target = base_resolved.joinpath(*parts).resolve()
+    try:
+        target.relative_to(base_resolved)
+    except ValueError as exc:
+        raise UnsafePathError(f"path escapes {base_resolved}: {parts!r}") from exc
+    return target
+
+
 def write_gz(path: Path, obj) -> None:
     """Write a JSON object gzip-compressed (raw hive data is highly repetitive
     and the spike disk is small — gzip shrinks it ~19x)."""
@@ -73,17 +91,17 @@ def load_manifest(path: Path) -> dict:
 def _bump_empty(args, count: int, reading_rows: int) -> int:
     """Return the updated consecutive-empty-window count (backfill early-exit).
 
-    No-op unless ``--stop-after-empty`` is set; increments on an empty window,
-    resets to 0 on a window that has data.
+    No-op unless ``--stop-after-empty`` is set with ``--reverse``; increments on
+    an empty window, resets to 0 on a window that has data.
     """
-    if not args.stop_after_empty:
+    if not args.stop_after_empty or not args.reverse:
         return count
     return count + 1 if reading_rows == 0 else 0
 
 
 def _stop(args, count: int) -> bool:
     """Whether the consecutive-empty streak has reached the backfill cutoff."""
-    return bool(args.stop_after_empty) and count >= args.stop_after_empty
+    return bool(args.stop_after_empty) and bool(args.reverse) and count >= args.stop_after_empty
 
 
 def _log_window(a, h, s, e, rec) -> None:
@@ -116,11 +134,12 @@ def fetch_window(bm, a, h, hdir: Path, s: int, e: int, args) -> dict:
 
 def process_hive(bm, a, h, wins, raw: Path, completed: dict, args, save_manifest) -> None:
     """Fetch every outstanding window for one hive, recording results in
-    ``completed``. Raises ``StopIteration`` when the call budget is reached so
+    ``completed``. Raises ``BudgetExhausted`` when the call budget is reached so
     the caller can stop the whole run cleanly (resumable)."""
     hid = h["hiveId"]
-    hdir = raw / hid
+    hdir = resolve_within(raw, hid)
     consecutive_empty = 0
+    calls_per_window = 1 + (0 if args.no_notes else 1)
     for s, e in wins:
         key = f"{hid}|{s}|{e}"
         if key in completed:
@@ -131,9 +150,9 @@ def process_hive(bm, a, h, wins, raw: Path, completed: dict, args, save_manifest
             if _stop(args, consecutive_empty):
                 break
             continue
-        if bm.call_count >= args.max_calls:
+        if bm.call_count + calls_per_window > args.max_calls:
             print(f"\n⏸  budget reached ({bm.call_count} calls). Resume later.")
-            raise StopIteration
+            raise BudgetExhausted
 
         rec = fetch_window(bm, a, h, hdir, s, e, args)
         completed[key] = rec
@@ -176,7 +195,7 @@ def main() -> int:
     else:
         end = now_epoch() // 86400 * 86400
     window = args.window_days * 24 * 60 * 60
-    out = Path(args.out)
+    out = Path(args.out).resolve()
     raw = out / "raw"
     out.mkdir(parents=True, exist_ok=True)
     manifest_path = out / "manifest.json"
@@ -199,23 +218,28 @@ def main() -> int:
             if args.apiary:
                 wanted = {a.lower() for a in args.apiary}
                 apiaries = [a for a in apiaries
-                            if a.get("name", "").lower() in wanted or a.get("apiaryId") in args.apiary]
+                            if (a.get("name") or "").lower() in wanted
+                            or a.get("apiaryId") in args.apiary]
             hives = [(a, h) for a in apiaries for h in a.get("hives", [])]
             print(f"scope: {len(apiaries)} apiaries, {len(hives)} hives")
             print(f"range: {args.start} .. {args.end or 'now'}  "
                   f"({len(list(iter_windows(start, end, window)))} windows/hive)")
             print(f"budget: stop at {args.max_calls} calls (already used {bm.call_count})\n")
 
+            wins = list(iter_windows(start, end, window))
+            if args.reverse:
+                wins.reverse()
             for a, h in hives:
-                wins = list(iter_windows(start, end, window))
-                if args.reverse:
-                    wins.reverse()
                 process_hive(bm, a, h, wins, raw, completed, args, save_manifest)
-        except StopIteration:
+        except BudgetExhausted:
             stopped_early = True
         except RateLimited as ex:
             print(f"\n⏸  rate limited by server ({ex.status}). Saving and exiting; resume later.")
             stopped_early = True
+        except UnsafePathError as ex:
+            save_manifest()
+            print(f"\n✗ unsafe hiveId rejected: {ex}", file=sys.stderr)
+            return 3
         except BroodMinderError as ex:
             save_manifest()
             print(f"\n✗ API error: {ex}", file=sys.stderr)

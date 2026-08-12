@@ -21,9 +21,10 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def _load_script(name: str):
     path = ROOT / "scripts" / f"{name}.py"
-    spec = importlib.util.spec_from_file_location(name, path)
+    mod_name = f"_scripts_{name}"
+    spec = importlib.util.spec_from_file_location(mod_name, path)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
+    sys.modules[mod_name] = mod
     spec.loader.exec_module(mod)
     return mod
 
@@ -99,7 +100,7 @@ def test_bump_empty_off_is_noop():
 
 
 def test_bump_empty_counts_and_resets():
-    args = _args(stop_after_empty=2)
+    args = _args(stop_after_empty=2, reverse=True)
     assert extract_all._bump_empty(args, 1, 0) == 2      # empty -> increment
     assert extract_all._bump_empty(args, 5, 10) == 0     # non-empty -> reset
 
@@ -107,7 +108,7 @@ def test_bump_empty_counts_and_resets():
 def test_stop_predicate():
     assert extract_all._stop(_args(stop_after_empty=0), 99) is False
     assert extract_all._stop(_args(stop_after_empty=2), 1) is False
-    assert extract_all._stop(_args(stop_after_empty=2), 2) is True
+    assert extract_all._stop(_args(stop_after_empty=2, reverse=True), 2) is True
 
 
 class _FakeBM:
@@ -153,11 +154,11 @@ def test_fetch_window_no_notes(tmp_path):
     assert not (hdir / "0-100.notes.json.gz").exists()
 
 
-def test_process_hive_budget_raises_stopiteration(tmp_path):
+def test_process_hive_budget_raises(tmp_path):
     bm = _FakeBM([{"positionID": "p", "readings": [{"timestamp": 1}]}])
     bm.call_count = 900  # already at budget
     completed = {}
-    with pytest.raises(StopIteration):
+    with pytest.raises(extract_all.BudgetExhausted):
         extract_all.process_hive(bm, {"apiaryId": "A", "name": "Api"},
                                   {"hiveId": "H1", "name": "Hive"},
                                   [(0, 100)], tmp_path, completed,
@@ -176,13 +177,13 @@ def test_process_hive_skips_completed(tmp_path):
 
 
 def test_process_hive_stop_after_empty(tmp_path):
-    # Two empty windows; stop_after_empty=1 should stop after the first.
+    # Two empty windows; stop_after_empty=1 with --reverse should stop after the first.
     bm = _FakeBM([{"positionID": "p", "readings": []}])
     completed = {}
     extract_all.process_hive(bm, {"apiaryId": "A", "name": "Api"},
                              {"hiveId": "H1", "name": "Hive"},
                              [(0, 100), (100, 200)], tmp_path, completed,
-                             _args(stop_after_empty=1, no_notes=True), lambda: None)
+                             _args(stop_after_empty=1, no_notes=True, reverse=True), lambda: None)
     assert len(completed) == 1  # stopped after first empty window
 
 
