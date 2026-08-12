@@ -42,6 +42,8 @@ def ruleset_param_enabled(rule_params: dict, param: str) -> bool:
     Only the boolean ``True`` is accepted; truthy non-boolean values (e.g. the
     string ``"false"``) are treated as non-compliant.
     """
+    if not isinstance(rule_params, dict):
+        return False
     return rule_params.get(param, False) is True
 
 
@@ -51,9 +53,15 @@ def pull_request_params(ruleset_json: dict) -> dict:
     Returns an empty dict when the rule is absent so the compliance predicate
     fails closed on an unexpected payload shape.
     """
-    for rule in ruleset_json.get("rules", []) or []:
-        if rule.get("type") == "pull_request":
-            return rule.get("parameters", {}) or {}
+    if not isinstance(ruleset_json, dict):
+        return {}
+    rules = ruleset_json.get("rules")
+    if not isinstance(rules, list):
+        return {}
+    for rule in rules:
+        if isinstance(rule, dict) and rule.get("type") == "pull_request":
+            params = rule.get("parameters")
+            return params if isinstance(params, dict) else {}
     return {}
 
 
@@ -112,34 +120,57 @@ def test_require_last_push_approval_enabled_live():
         "X-GitHub-Api-Version": "2022-11-28",
     }
 
-    # Only a successful read lets us make a compliance judgement. Any other
-    # status (auth, not-found, rate limit, GitHub 5xx) means we *cannot verify*,
-    # so skip rather than fail the suite on transient/credential issues.
+    # Only a successful read lets us make a compliance judgement.  A credential
+    # or permission error (401/403) when a token is present is a real failure —
+    # the token must carry `administration: read`.  Transient errors (rate-limit,
+    # 5xx, network) and unexpected response shapes are skipped so the suite stays
+    # green when CI cannot verify.
     try:
         listing = httpx.get(
             f"https://api.github.com/repos/{REPO_SLUG}/rulesets",
             headers=headers,
+            params={"per_page": 100},
             timeout=15,
         )
     except httpx.HTTPError as exc:  # network unavailable — don't fail the suite
         pytest.skip(f"could not reach GitHub API: {exc}")
 
     if listing.status_code != 200:
+        if listing.status_code in (401, 403):
+            pytest.fail(
+                f"access denied listing {REPO_SLUG} rulesets "
+                f"(HTTP {listing.status_code}); "
+                "ensure GH_TOKEN has 'administration: read' permission"
+            )
         pytest.skip(
             f"could not list {REPO_SLUG} rulesets (HTTP {listing.status_code}); "
             "live ruleset check skipped"
         )
 
-    match = next((r for r in listing.json() if r.get("name") == RULESET_NAME), None)
+    rulesets = listing.json()
+    if not isinstance(rulesets, list):
+        pytest.skip(
+            f"unexpected API response format for rulesets listing "
+            f"(expected list, got {type(rulesets).__name__})"
+        )
+
+    match = next(
+        (r for r in rulesets if isinstance(r, dict) and r.get("name") == RULESET_NAME),
+        None,
+    )
     assert match is not None, (
         f"repository must define the `{RULESET_NAME}` ruleset "
         "(org rulesets standard)"
     )
 
+    ruleset_id = match.get("id")
+    if ruleset_id is None:
+        pytest.skip(f"ruleset '{RULESET_NAME}' found but is missing an 'id' field")
+
     # The listing does not include rule parameters; fetch the ruleset by id.
     try:
         detail = httpx.get(
-            f"https://api.github.com/repos/{REPO_SLUG}/rulesets/{match['id']}",
+            f"https://api.github.com/repos/{REPO_SLUG}/rulesets/{ruleset_id}",
             headers=headers,
             timeout=15,
         )
@@ -147,6 +178,12 @@ def test_require_last_push_approval_enabled_live():
         pytest.skip(f"could not reach GitHub API: {exc}")
 
     if detail.status_code != 200:
+        if detail.status_code in (401, 403):
+            pytest.fail(
+                f"access denied reading '{RULESET_NAME}' ruleset "
+                f"(HTTP {detail.status_code}); "
+                "ensure GH_TOKEN has 'administration: read' permission"
+            )
         pytest.skip(
             f"could not read `{RULESET_NAME}` ruleset (HTTP {detail.status_code}); "
             "live ruleset check skipped"
