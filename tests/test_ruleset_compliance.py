@@ -159,7 +159,10 @@ def test_pr_quality_dismiss_stale_reviews_on_push_live():
             "live ruleset check skipped"
         )
 
-    listing_data = listing.json()
+    try:
+        listing_data = listing.json()
+    except Exception as exc:
+        pytest.skip(f"could not parse GitHub API response: {exc}")
     if not isinstance(listing_data, list):
         pytest.skip(
             f"Unexpected response format from GitHub API (expected list, got {type(listing_data).__name__})"
@@ -195,7 +198,11 @@ def test_pr_quality_dismiss_stale_reviews_on_push_live():
             "live ruleset check skipped"
         )
 
-    assert pr_rule_param_enabled(detail.json(), PARAM) is True, (
+    try:
+        detail_data = detail.json()
+    except Exception as exc:
+        pytest.skip(f"could not parse GitHub API response: {exc}")
+    assert pr_rule_param_enabled(detail_data, PARAM) is True, (
         f"ruleset '{RULESET_NAME}' parameter '{PARAM}' must be true on {REPO_SLUG} — "
         "the codified standard (standards/rulesets/pr-quality.json) is the source of "
         f"truth; run scripts/apply-rulesets.sh --repo {REPO_SLUG} to converge (issue #91)"
