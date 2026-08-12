@@ -59,12 +59,13 @@ def hive_dirs(raw_root: Path):
     return [d for d in sorted(raw_root.iterdir()) if d.is_dir()]
 
 
-def iter_reading_rows(hdir: Path):
-    """Yield (position, reading) for every reading row across a hive's windows."""
+def iter_readings(hdir: Path):
+    """Yield (positionID, reading) for every reading row across a hive's windows."""
     for f in iter_reading_files(hdir):
         for pos in load_json(f) or []:
+            pid = pos.get("positionID")
             for r in pos.get("readings", []) or []:
-                yield pos, r
+                yield pid, r
 
 
 def discover_metric_keys(raw_root: Path) -> set:
@@ -72,18 +73,19 @@ def discover_metric_keys(raw_root: Path) -> set:
     the CSV can have a fixed header."""
     keys: set[str] = set()
     for hdir in hive_dirs(raw_root):
-        for _pos, r in iter_reading_rows(hdir):
+        for _pid, r in iter_readings(hdir):
             keys.update((r.get("readings") or {}).keys())
     return keys
 
 
-def build_row(hid: str, m: dict, pos: dict, r: dict, ts) -> dict:
+def build_row(hid: str, m: dict, pid: str, r: dict) -> dict:
     """Assemble one flat reading row (base columns + ``m_``-prefixed metrics)."""
+    ts = r.get("timestamp")
     metrics = r.get("readings") or {}
     return {
         "apiaryId": m.get("apiaryId"), "apiaryName": m.get("apiaryName"),
         "hiveId": hid, "hiveName": m.get("hiveName"),
-        "positionID": pos.get("positionID"), "deviceId": r.get("deviceId"),
+        "positionID": pid, "deviceId": r.get("deviceId"),
         "timestamp": ts,
         "datetime": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat() if ts is not None else None,
         "batteryLevel": r.get("batteryLevel"),
@@ -92,14 +94,31 @@ def build_row(hid: str, m: dict, pos: dict, r: dict, ts) -> dict:
     }
 
 
-def _update_coverage(c: dict, r: dict, pid, ts) -> None:
-    """Fold one reading row into a hive's running coverage stats."""
+def accumulate_coverage(coverage: dict, row: dict) -> None:
+    """Fold one flat reading row into the per-hive running coverage stats."""
+    hid = row["hiveId"]
+    ts = row.get("timestamp")
+    c = coverage[hid]
     c["rows"] += 1
-    c["devices"].add(r.get("deviceId"))
-    c["positions"].add(pid)
+    c["devices"].add(row.get("deviceId"))
+    c["positions"].add(row.get("positionID"))
     if ts is not None:
         c["min_ts"] = ts if c["min_ts"] is None else min(c["min_ts"], ts)
         c["max_ts"] = ts if c["max_ts"] is None else max(c["max_ts"], ts)
+
+
+def iter_hive_rows(hdir: Path, meta: dict):
+    """Yield deduplicated flat row dicts for one hive directory."""
+    hid = hdir.name
+    m = meta.get(hid, {})
+    seen: set = set()
+    for pid, r in iter_readings(hdir):
+        ts = r.get("timestamp")
+        dk = (pid, r.get("deviceId"), ts)
+        if dk in seen:
+            continue
+        seen.add(dk)
+        yield build_row(hid, m, pid, r)
 
 
 def stream_readings(raw_root, meta, base_cols, metric_cols, ndjson_fh, csv_writer, coverage) -> int:
@@ -107,32 +126,20 @@ def stream_readings(raw_root, meta, base_cols, metric_cols, ndjson_fh, csv_write
     updating coverage. Returns the total row count written."""
     n_rows = 0
     for hdir in hive_dirs(raw_root):
-        hid = hdir.name
-        m = meta.get(hid, {})
-        # Dedupe within a hive: overlapping/re-fetched windows can repeat the
-        # same (position, device, timestamp). Reset per hive to bound memory.
-        seen: set = set()
-        for pos, r in iter_reading_rows(hdir):
-            ts = r.get("timestamp")
-            pid = pos.get("positionID")
-            dk = (pid, r.get("deviceId"), ts)
-            if dk in seen:
-                continue
-            seen.add(dk)
-            row = build_row(hid, m, pos, r, ts)
+        for row in iter_hive_rows(hdir, meta):
             ndjson_fh.write(json.dumps(row) + "\n")
             if csv_writer:
                 csv_writer.writerow({k: row.get(k) for k in base_cols + metric_cols})
             n_rows += 1
-            _update_coverage(coverage[hid], r, pid, ts)
+            accumulate_coverage(coverage, row)
     return n_rows
 
 
-def write_notes(raw_root, meta, out_path: Path) -> int:
+def write_notes(out_path: Path, meta: dict, raw: Path) -> int:
     """Write all notes (small) to plain ndjson. Returns the note count."""
     n_notes = 0
     with out_path.open("w") as fh:
-        for hdir in hive_dirs(raw_root):
+        for hdir in hive_dirs(raw):
             hid = hdir.name
             m = meta.get(hid, {})
             for f in iter_note_files(hdir):
@@ -158,6 +165,9 @@ def build_coverage_out(coverage: dict, meta: dict) -> dict:
             "latest": datetime.fromtimestamp(c["max_ts"], tz=timezone.utc).isoformat() if c["max_ts"] is not None else None,
         }
     return cov_out
+
+
+build_coverage = build_coverage_out
 
 
 def main() -> int:
@@ -197,7 +207,7 @@ def main() -> int:
         if csv_fh:
             csv_fh.close()
 
-    n_notes = write_notes(RAW, meta, OUT / "notes.ndjson")
+    n_notes = write_notes(OUT / "notes.ndjson", meta, RAW)
 
     cov_out = build_coverage_out(coverage, meta)
     (OUT / "coverage.json").write_text(json.dumps(cov_out, indent=2))

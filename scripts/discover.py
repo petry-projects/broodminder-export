@@ -48,6 +48,23 @@ def walk_sample_ids(apiaries):
     return hive_id, device_id
 
 
+find_sample_ids = walk_sample_ids
+
+
+def _sample(out, label, fn, ok_key, err_key, msg, clip):
+    """Probe one endpoint; store result under ok_key or error string under err_key."""
+    print(f"{label}: {msg}")
+    try:
+        data = fn()
+    except RateLimited:
+        raise
+    except BroodMinderError as e:
+        out[err_key] = str(e)
+        return
+    out[ok_key] = data
+    print(json.dumps(data, indent=2)[:clip])
+
+
 def sample_endpoint(out, key, header, err_label, fn, clip):
     """Call ``fn()`` for a probe endpoint, recording the sample (or the error)
     under ``key`` in ``out`` and printing a clipped preview."""

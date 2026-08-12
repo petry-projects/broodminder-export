@@ -133,7 +133,7 @@ def test_fetch_window_writes_and_counts(tmp_path):
     hdir = tmp_path / "H1"
     a = {"apiaryId": "A", "name": "Api"}
     h = {"hiveId": "H1", "name": "Hive"}
-    rec = extract_all.fetch_window(bm, a, h, hdir, 0, 100, _args())
+    rec = extract_all.fetch_window(bm, a, h, "H1", 0, 100, hdir, _args())
     assert rec["reading_rows"] == 2
     assert rec["notes"] == 1
     assert rec["apiaryId"] == "A"
@@ -148,8 +148,8 @@ def test_fetch_window_no_notes(tmp_path):
     bm = _FakeBM([{"positionID": "p", "readings": []}])
     hdir = tmp_path / "H1"
     rec = extract_all.fetch_window(bm, {"apiaryId": "A", "name": "Api"},
-                                   {"hiveId": "H1", "name": "Hive"}, hdir, 0, 100,
-                                   _args(no_notes=True))
+                                   {"hiveId": "H1", "name": "Hive"}, "H1", 0, 100,
+                                   hdir, _args(no_notes=True))
     assert "notes" not in rec
     assert not (hdir / "0-100.notes.json.gz").exists()
 
@@ -161,8 +161,8 @@ def test_process_hive_budget_raises(tmp_path):
     with pytest.raises(extract_all.BudgetExhausted):
         extract_all.process_hive(bm, {"apiaryId": "A", "name": "Api"},
                                   {"hiveId": "H1", "name": "Hive"},
-                                  [(0, 100)], tmp_path, completed,
-                                  _args(max_calls=900), lambda: None)
+                                  [(0, 100)], _args(max_calls=900), tmp_path, completed,
+                                  lambda: None)
     assert completed == {}  # nothing fetched
 
 
@@ -171,19 +171,20 @@ def test_process_hive_skips_completed(tmp_path):
     completed = {"H1|0|100": {"reading_rows": 5}}
     extract_all.process_hive(bm, {"apiaryId": "A", "name": "Api"},
                              {"hiveId": "H1", "name": "Hive"},
-                             [(0, 100)], tmp_path, completed,
-                             _args(), lambda: None)
+                             [(0, 100)], _args(), tmp_path, completed,
+                             lambda: None)
     assert bm.call_count == 0  # already-completed window not re-fetched
 
 
 def test_process_hive_stop_after_empty(tmp_path):
-    # Two empty windows; stop_after_empty=1 with --reverse should stop after the first.
+    # Two empty windows; stop_after_empty=1 should stop after the first.
     bm = _FakeBM([{"positionID": "p", "readings": []}])
     completed = {}
     extract_all.process_hive(bm, {"apiaryId": "A", "name": "Api"},
                              {"hiveId": "H1", "name": "Hive"},
-                             [(0, 100), (100, 200)], tmp_path, completed,
-                             _args(stop_after_empty=1, no_notes=True, reverse=True), lambda: None)
+                             [(0, 100), (100, 200)],
+                             _args(stop_after_empty=1, no_notes=True, reverse=True),
+                             tmp_path, completed, lambda: None)
     assert len(completed) == 1  # stopped after first empty window
 
 
@@ -255,7 +256,7 @@ def test_write_notes_list_and_dict(tmp_path):
     _write_gz(raw / "H2" / "0-100.notes.json.gz", {"notes": [{"description": "b"}]})
     meta = {"H1": {"hiveName": "One"}, "H2": {"hiveName": "Two"}}
     out = tmp_path / "notes.ndjson"
-    n = flatten.write_notes(raw, meta, out)
+    n = flatten.write_notes(out, meta, raw)
     assert n == 2
     recs = [json.loads(x) for x in out.read_text().splitlines()]
     assert {r["hiveId"] for r in recs} == {"H1", "H2"}

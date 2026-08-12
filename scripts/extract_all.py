@@ -47,6 +47,9 @@ class BudgetExhausted(RuntimeError):
     """The API-call budget was reached; the run stops and can be resumed."""
 
 
+_BudgetExhausted = BudgetExhausted
+
+
 def resolve_within(base: Path, *parts: str) -> Path:
     base_resolved = base.resolve()
     target = base_resolved.joinpath(*parts).resolve()
@@ -55,6 +58,31 @@ def resolve_within(base: Path, *parts: str) -> Path:
     except ValueError as exc:
         raise UnsafePathError(f"path escapes {base_resolved}: {parts!r}") from exc
     return target
+
+
+def select_apiaries(apiaries, filters):
+    """Return the subset of apiaries matching the filter list (name or id, case-insensitive).
+
+    If filters is empty, returns all. Handles both list and ``{"apiaries": [...]}`` shapes.
+    """
+    if isinstance(apiaries, dict):
+        apiaries = apiaries.get("apiaries", [])
+    if not filters:
+        return apiaries
+    wanted = {a.lower() for a in filters}
+    return [a for a in apiaries
+            if (a.get("name") or "").lower() in wanted
+            or a.get("apiaryId") in filters]
+
+
+def _empty_run(count: int, reading_rows: int, stop_after_empty: int):
+    """Return (new_count, should_stop) for consecutive-empty-window backfill tracking."""
+    if not stop_after_empty:
+        return count, False
+    if reading_rows:
+        return 0, False
+    new_count = count + 1
+    return new_count, new_count >= stop_after_empty
 
 
 def write_gz(path: Path, obj) -> None:
@@ -115,24 +143,24 @@ def _log_window(a, h, s, e, rec) -> None:
           f"rows={rec['reading_rows']:<5} notes={rec.get('notes', '-')}")
 
 
-def fetch_window(bm, a, h, hdir: Path, s: int, e: int, args) -> dict:
+def fetch_window(bm, a, h, hid: str, s: int, e: int, hdir: Path, args) -> dict:
     """Fetch one hive window (readings + optional notes), write the raw gzip
     files, and return the per-window manifest record with row counts."""
     hdir.mkdir(parents=True, exist_ok=True)
     rec = {"apiaryId": a.get("apiaryId"), "apiaryName": a.get("name"),
            "hiveName": h.get("name")}
-    readings = bm.hive_readings(h["hiveId"], s, e)
+    readings = bm.hive_readings(hid, s, e)
     write_gz(hdir / f"{s}-{e}.readings.json.gz", readings)
     rec["reading_rows"] = count_reading_rows(readings)
 
     if not args.no_notes:
-        notes = bm.hive_notes(h["hiveId"], s, e)
+        notes = bm.hive_notes(hid, s, e)
         write_gz(hdir / f"{s}-{e}.notes.json.gz", notes)
         rec["notes"] = count_notes(notes)
     return rec
 
 
-def process_hive(bm, a, h, wins, raw: Path, completed: dict, args, save_manifest) -> None:
+def process_hive(bm, a, h, wins, args, raw: Path, completed: dict, save_manifest) -> None:
     """Fetch every outstanding window for one hive, recording results in
     ``completed``. Raises ``BudgetExhausted`` when the call budget is reached so
     the caller can stop the whole run cleanly (resumable)."""
@@ -145,25 +173,23 @@ def process_hive(bm, a, h, wins, raw: Path, completed: dict, args, save_manifest
         if key in completed:
             # Honor early-exit using cached row counts too, so a resumed
             # backfill doesn't walk past the known data edge.
-            consecutive_empty = _bump_empty(args, consecutive_empty,
-                                             completed[key].get("reading_rows", 0))
-            if _stop(args, consecutive_empty):
+            consecutive_empty, should_stop = _empty_run(
+                consecutive_empty, completed[key].get("reading_rows", 0), args.stop_after_empty)
+            if should_stop:
                 break
             continue
         if bm.call_count + calls_per_window > args.max_calls:
             print(f"\n⏸  budget reached ({bm.call_count} calls). Resume later.")
             raise BudgetExhausted
 
-        rec = fetch_window(bm, a, h, hdir, s, e, args)
+        rec = fetch_window(bm, a, h, hid, s, e, hdir, args)
         completed[key] = rec
-        # Early-exit bookkeeping for backfill: stop walking a hive backwards
-        # once we hit a run of empty windows (data is effectively contiguous;
-        # nothing older to find).
-        consecutive_empty = _bump_empty(args, consecutive_empty, rec["reading_rows"])
+        consecutive_empty, should_stop = _empty_run(
+            consecutive_empty, rec["reading_rows"], args.stop_after_empty)
         _log_window(a, h, s, e, rec)
         if len(completed) % 25 == 0:
             save_manifest()
-        if _stop(args, consecutive_empty):
+        if should_stop:
             break  # next hive
 
 
@@ -215,11 +241,7 @@ def main() -> int:
             # The very first call can itself be rate-limited; keep it inside the
             # handler so a 429 here exits cleanly (resumable) rather than crashing.
             apiaries = bm.apiaries()
-            if args.apiary:
-                wanted = {a.lower() for a in args.apiary}
-                apiaries = [a for a in apiaries
-                            if (a.get("name") or "").lower() in wanted
-                            or a.get("apiaryId") in args.apiary]
+            apiaries = select_apiaries(apiaries, args.apiary)
             hives = [(a, h) for a in apiaries for h in a.get("hives", [])]
             print(f"scope: {len(apiaries)} apiaries, {len(hives)} hives")
             print(f"range: {args.start} .. {args.end or 'now'}  "
@@ -230,7 +252,7 @@ def main() -> int:
             if args.reverse:
                 wins.reverse()
             for a, h in hives:
-                process_hive(bm, a, h, wins, raw, completed, args, save_manifest)
+                process_hive(bm, a, h, wins, args, raw, completed, save_manifest)
         except BudgetExhausted:
             stopped_early = True
         except RateLimited as ex:
@@ -239,11 +261,11 @@ def main() -> int:
         except UnsafePathError as ex:
             save_manifest()
             print(f"\n✗ unsafe hiveId rejected: {ex}", file=sys.stderr)
-            return 3
+            return 2
         except BroodMinderError as ex:
             save_manifest()
             print(f"\n✗ API error: {ex}", file=sys.stderr)
-            return 2
+            return 3
 
         save_manifest()
         total_rows = sum(v.get("reading_rows", 0) for v in completed.values())
