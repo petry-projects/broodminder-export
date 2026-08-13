@@ -128,6 +128,18 @@ def test_sonarcloud_pip_install_step_retries():
         "backoff so a transient PyPI/network failure doesn't fail the SonarCloud run "
         "(Fleet Monitor flake remediation, issue #99)"
     )
+    assert "for attempt in 1 2 3" in block, (
+        "the sonarcloud.yml `Install dependencies` step must use `for attempt in 1 2 3` "
+        "to bound retries to exactly 3 total attempts"
+    )
+    assert re.search(r"sleep.*attempt", block), (
+        "the sonarcloud.yml `Install dependencies` step must use increasing backoff delays "
+        "that scale with the attempt number"
+    )
+    assert "exit 1" in block, (
+        "the sonarcloud.yml `Install dependencies` step must explicitly `exit 1` after "
+        "all retry attempts are exhausted"
+    )
 
 
 def test_sonarcloud_pip_install_still_runs_underlying_command():
