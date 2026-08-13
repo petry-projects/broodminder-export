@@ -13,6 +13,13 @@ Fleet Monitor's ~20% (1/5) failure-rate warning. These guards pin that both
 steps retry-with-backoff so a flaky index/CDN doesn't fail CI, while still
 running the original command and (for gitleaks) verifying the checksum.
 
+The SonarCloud workflow (`sonarcloud.yml`) shares the same ``pip install``
+exposure: it installs ``requirements.txt`` to generate the coverage report the
+scan uploads. Its SonarCloud scan step is already resilient (continue-on-error
+plus a retry step), so the remaining nondeterministic failure point is that pip
+install. Fleet Monitor flagged the workflow at a 26.1% failure rate (issue #99);
+the guard below pins the same retry-with-backoff there.
+
 These are text-based checks so they run with only ``requirements.txt`` installed
 (no YAML parser), mirroring ``test_ci_compliance.py``.
 """
@@ -24,6 +31,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
+SONARCLOUD_WORKFLOW = ROOT / ".github" / "workflows" / "sonarcloud.yml"
 
 # A step block starts at an indented `- name:` and runs until the next one.
 _STEP_SPLIT = re.compile(r"^\s+- name:", re.MULTILINE)
@@ -32,6 +40,11 @@ _STEP_SPLIT = re.compile(r"^\s+- name:", re.MULTILINE)
 def _ci_text() -> str:
     assert CI_WORKFLOW.exists(), f"{CI_WORKFLOW} is missing"
     return CI_WORKFLOW.read_text(encoding="utf-8")
+
+
+def _sonarcloud_text() -> str:
+    assert SONARCLOUD_WORKFLOW.exists(), f"{SONARCLOUD_WORKFLOW} is missing"
+    return SONARCLOUD_WORKFLOW.read_text(encoding="utf-8")
 
 
 def _step_containing(text: str, needle: str) -> str:
@@ -96,4 +109,32 @@ def test_network_steps_still_run_underlying_commands():
     assert "wget" in gitleaks_run and "gitleaks.tar.gz" in gitleaks_run, (
         "the `Install gitleaks` step must execute `wget` to download `gitleaks.tar.gz` "
         "(not just reference them in comments)"
+    )
+
+
+# --- SonarCloud workflow pip-install resilience (issue #99) -------------------
+#
+# sonarcloud.yml installs requirements.txt to generate the coverage report the
+# scan uploads. Its scan step is already retry-guarded (continue-on-error + a
+# retry step), so the last unguarded network failure point is that pip install.
+# Fleet Monitor flagged the workflow at a 26.1% failure rate; these guards pin
+# the same retry-with-backoff already applied to ci.yml.
+
+
+def test_sonarcloud_pip_install_step_retries():
+    block = _step_containing(_sonarcloud_text(), "pip install -r requirements.txt")
+    assert _has_retry_loop(block), (
+        "the sonarcloud.yml `Install dependencies` step must retry `pip install` with "
+        "backoff so a transient PyPI/network failure doesn't fail the SonarCloud run "
+        "(Fleet Monitor flake remediation, issue #99)"
+    )
+
+
+def test_sonarcloud_pip_install_still_runs_underlying_command():
+    """The retry must *wrap* the real command, not replace it."""
+    block = _step_containing(_sonarcloud_text(), "pip install -r requirements.txt")
+    run = "\n".join(ln for ln in block.splitlines() if not ln.lstrip().startswith("#"))
+    assert "pip install -r requirements.txt" in run, (
+        "the sonarcloud.yml `Install dependencies` step must execute "
+        "`pip install -r requirements.txt` (not just reference it in a comment)"
     )
