@@ -46,7 +46,19 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        # Retry with backoff so a transient PyPI/network hiccup doesn't fail the scan.
+        run: |
+          for attempt in 1 2 3; do
+            if pip install -r requirements.txt; then
+              exit 0
+            fi
+            if [ "${attempt}" -eq 3 ]; then
+              echo "::error::pip install failed after 3 attempts" >&2
+              exit 1
+            fi
+            echo "::warning::pip install failed (attempt ${attempt}/3); retrying in $((attempt * 5))s" >&2
+            sleep "$((attempt * 5))"
+          done
       - name: Generate coverage report
         run: python -m pytest --cov=bm --cov=scripts --cov-report=xml:coverage.xml -q
       - name: SonarCloud Scan
