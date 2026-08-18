@@ -188,6 +188,18 @@ def test_process_hive_stop_after_empty(tmp_path):
     assert len(completed) == 1  # stopped after first empty window
 
 
+def test_process_hive_stop_after_empty_forward_no_stop(tmp_path):
+    # In forward mode (reverse=False), stop_after_empty has no effect.
+    bm = _FakeBM([{"positionID": "p", "readings": []}])
+    completed = {}
+    extract_all.process_hive(bm, {"apiaryId": "A", "name": "Api"},
+                             {"hiveId": "H1", "name": "Hive"},
+                             [(0, 100), (100, 200)],
+                             _args(stop_after_empty=1, no_notes=True, reverse=False),
+                             tmp_path, completed, lambda: None)
+    assert len(completed) == 2  # both windows fetched; no early stop in forward mode
+
+
 # ==========================================================================
 # flatten.py
 # ==========================================================================
