@@ -138,7 +138,7 @@ def stream_readings(raw_root, meta, base_cols, metric_cols, ndjson_fh, csv_write
 def write_notes(out_path: Path, meta: dict, raw: Path) -> int:
     """Write all notes (small) to plain ndjson. Returns the note count."""
     n_notes = 0
-    with out_path.open("w") as fh:
+    with out_path.open("w", encoding="utf-8") as fh:
         for hdir in hive_dirs(raw):
             hid = hdir.name
             m = meta.get(hid, {})
