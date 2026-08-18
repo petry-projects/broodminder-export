@@ -75,13 +75,9 @@ def select_apiaries(apiaries, filters):
             or a.get("apiaryId") in filters]
 
 
-def _empty_run(count: int, reading_rows: int, stop_after_empty: int, reverse: bool = False):
-    """Return (new_count, should_stop) for consecutive-empty-window backfill tracking.
-
-    Only applies stopping logic when reverse mode is enabled, preserving forward
-    extraction of later windows.
-    """
-    if not stop_after_empty or not reverse:
+def _empty_run(count: int, reading_rows: int, stop_after_empty: int):
+    """Return (new_count, should_stop) for consecutive-empty-window backfill tracking."""
+    if not stop_after_empty:
         return count, False
     if reading_rows:
         return 0, False
@@ -177,9 +173,8 @@ def process_hive(bm, a, h, wins, args, raw: Path, completed: dict, save_manifest
         if key in completed:
             # Honor early-exit using cached row counts too, so a resumed
             # backfill doesn't walk past the known data edge.
-            consecutive_empty, should_stop = _empty_run(
-                consecutive_empty, completed[key].get("reading_rows", 0), args.stop_after_empty, args.reverse)
-            if should_stop:
+            consecutive_empty = _bump_empty(args, consecutive_empty, completed[key].get("reading_rows", 0))
+            if _stop(args, consecutive_empty):
                 break
             continue
         if bm.call_count + calls_per_window > args.max_calls:
@@ -188,12 +183,11 @@ def process_hive(bm, a, h, wins, args, raw: Path, completed: dict, save_manifest
 
         rec = fetch_window(bm, a, h, hid, s, e, hdir, args)
         completed[key] = rec
-        consecutive_empty, should_stop = _empty_run(
-            consecutive_empty, rec["reading_rows"], args.stop_after_empty, args.reverse)
+        consecutive_empty = _bump_empty(args, consecutive_empty, rec["reading_rows"])
         _log_window(a, h, s, e, rec)
         if len(completed) % 25 == 0:
             save_manifest()
-        if should_stop:
+        if _stop(args, consecutive_empty):
             break  # next hive
 
 
