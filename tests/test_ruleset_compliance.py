@@ -141,44 +141,59 @@ def test_pr_quality_dismiss_stale_reviews_on_push_live():
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
-    try:
-        listing = httpx.get(
-            f"https://api.github.com/repos/{REPO_SLUG}/rulesets",
-            headers=headers,
-            timeout=15,
-        )
-    except httpx.HTTPError as exc:  # network unavailable — don't fail the suite
-        pytest.skip(f"could not reach GitHub API: {exc}")
-
     # Auth/permission failures mean the token is configured but unusable — that is a
     # setup error, not a transient issue, so we fail rather than silently skip.
     # Other non-200 responses (rate limit, GitHub 5xx, 404) are genuinely transient
     # or environmental, so we skip to avoid false positives on unrelated outages.
     _AUTH_ERRORS = {401, 403}
-    if listing.status_code != 200:
-        if listing.status_code in _AUTH_ERRORS:
-            pytest.fail(
-                f"GitHub API returned HTTP {listing.status_code} listing {REPO_SLUG} rulesets; "
-                "verify the token has 'Metadata' (read) repository permission"
+
+    # Follow all ruleset-list pages (per_page=100) until pr-quality is found.
+    matching_ruleset = None
+    next_url: str | None = f"https://api.github.com/repos/{REPO_SLUG}/rulesets"
+    request_params: dict = {"per_page": 100}
+    while next_url is not None and matching_ruleset is None:
+        try:
+            listing = httpx.get(next_url, headers=headers, params=request_params, timeout=15)
+        except httpx.HTTPError as exc:  # network unavailable — don't fail the suite
+            pytest.skip(f"could not reach GitHub API: {exc}")
+
+        if listing.status_code != 200:
+            if listing.status_code in _AUTH_ERRORS:
+                pytest.fail(
+                    f"GitHub API returned HTTP {listing.status_code} listing {REPO_SLUG} rulesets; "
+                    "verify the token has 'Metadata' (read) repository permission"
+                )
+            pytest.skip(
+                f"could not list {REPO_SLUG} rulesets (HTTP {listing.status_code}); "
+                "live ruleset check skipped"
             )
-        pytest.skip(
-            f"could not list {REPO_SLUG} rulesets (HTTP {listing.status_code}); "
-            "live ruleset check skipped"
+
+        try:
+            listing_data = listing.json()
+        except Exception as exc:
+            pytest.skip(f"could not parse GitHub API response: {exc}")
+        if not isinstance(listing_data, list):
+            pytest.skip(
+                f"Unexpected response format from GitHub API (expected list, got {type(listing_data).__name__})"
+            )
+
+        matching_ruleset = next(
+            (rs for rs in listing_data if isinstance(rs, dict) and rs.get("name") == RULESET_NAME),
+            None,
         )
 
-    try:
-        listing_data = listing.json()
-    except Exception as exc:
-        pytest.skip(f"could not parse GitHub API response: {exc}")
-    if not isinstance(listing_data, list):
-        pytest.skip(
-            f"Unexpected response format from GitHub API (expected list, got {type(listing_data).__name__})"
-        )
+        # Advance to the next page (Link header) unless the ruleset was already found.
+        link_header = listing.headers.get("Link", "")
+        next_url = None
+        request_params = {}
+        for part in link_header.split(","):
+            part = part.strip()
+            if 'rel="next"' in part:
+                url_part = part.split(";")[0].strip()
+                if url_part.startswith("<") and url_part.endswith(">"):
+                    next_url = url_part[1:-1]
+                    break
 
-    matching_ruleset = next(
-        (rs for rs in listing_data if isinstance(rs, dict) and rs.get("name") == RULESET_NAME),
-        None,
-    )
     assert matching_ruleset is not None, (
         f"repository {REPO_SLUG} has no '{RULESET_NAME}' ruleset — the org standard "
         "requires it (github-settings.md#pr-quality); run "
