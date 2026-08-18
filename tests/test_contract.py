@@ -86,7 +86,7 @@ def test_hive_reading_row_schema(client, sample_hive_id, recent_window):
             assert r[k] is None or isinstance(r[k], numbers.Real)
         metrics = r.get("readings")
         assert isinstance(metrics, dict), "each row carries metric dict"
-        assert metrics, "each row carries metric dict"
+        assert metrics, "each row carries a non-empty metric dict"
         for v in metrics.values():
             assert v is None or isinstance(v, numbers.Real)
 
