@@ -351,22 +351,26 @@ def test_write_gz_roundtrip(tmp_path):
 # ---------------------------------------------------------------------------
 def test_empty_run_off():
     count, stop = extract_all._empty_run(5, 1, 0)
-    assert count == 5 and stop is False
+    assert count == 5
+    assert stop is False
 
 
 def test_empty_run_increment():
     count, stop = extract_all._empty_run(1, 0, 3)
-    assert count == 2 and stop is False
+    assert count == 2
+    assert stop is False
 
 
 def test_empty_run_reaches_limit():
     count, stop = extract_all._empty_run(2, 0, 3)
-    assert count == 3 and stop is True
+    assert count == 3
+    assert stop is True
 
 
 def test_empty_run_reset_on_data():
     count, stop = extract_all._empty_run(5, 1, 3)
-    assert count == 0 and stop is False
+    assert count == 0
+    assert stop is False
 
 
 # ---------------------------------------------------------------------------

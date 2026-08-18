@@ -106,7 +106,11 @@ def test_network_steps_still_run_underlying_commands():
     )
     gitleaks_block = _step_containing(text, "gitleaks.tar.gz")
     gitleaks_run = "\n".join(ln for ln in gitleaks_block.splitlines() if not ln.lstrip().startswith("#"))
-    assert "wget" in gitleaks_run and "gitleaks.tar.gz" in gitleaks_run, (
+    assert "wget" in gitleaks_run, (
+        "the `Install gitleaks` step must execute `wget` to download `gitleaks.tar.gz` "
+        "(not just reference them in comments)"
+    )
+    assert "gitleaks.tar.gz" in gitleaks_run, (
         "the `Install gitleaks` step must execute `wget` to download `gitleaks.tar.gz` "
         "(not just reference them in comments)"
     )
