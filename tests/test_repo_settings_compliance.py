@@ -92,7 +92,21 @@ def test_allow_auto_merge_enabled_live():
             "live repo-settings check skipped"
         )
 
-    assert repo_setting_enabled(resp.json(), "allow_auto_merge") is True, (
+    try:
+        resp_data = resp.json()
+    except ValueError as exc:
+        pytest.skip(f"could not parse {REPO_SLUG} API response: {exc}")
+    if not isinstance(resp_data, dict):
+        pytest.skip(
+            f"Unexpected response format from {REPO_SLUG} API response; "
+            "live repo-settings check skipped"
+        )
+    if "allow_auto_merge" not in resp_data:
+        pytest.skip(
+            f"allow_auto_merge field absent from {REPO_SLUG} API response; "
+            "token may lack admin visibility — live repo-settings check skipped"
+        )
+    assert repo_setting_enabled(resp_data, "allow_auto_merge") is True, (
         "allow_auto_merge must be enabled on this repository — required for the "
         "Dependabot auto-merge workflow (org github-settings standard, Merge Settings)"
     )

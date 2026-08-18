@@ -122,7 +122,7 @@ def test_require_last_push_approval_enabled_live():
 
     # Only a successful read lets us make a compliance judgement.  A credential
     # or permission error (401/403) when a token is present is a real failure —
-    # the token must carry `administration: read`.  Transient errors (rate-limit,
+    # the token must carry 'Metadata' (read) repository permission.  Transient errors (rate-limit,
     # 5xx, network) and unexpected response shapes are skipped so the suite stays
     # green when CI cannot verify.
     try:
@@ -140,7 +140,7 @@ def test_require_last_push_approval_enabled_live():
             pytest.fail(
                 f"access denied listing {REPO_SLUG} rulesets "
                 f"(HTTP {listing.status_code}); "
-                "ensure GH_TOKEN has 'administration: read' permission"
+                "ensure GH_TOKEN has 'Metadata' (read) repository permission"
             )
         pytest.skip(
             f"could not list {REPO_SLUG} rulesets (HTTP {listing.status_code}); "
@@ -182,7 +182,7 @@ def test_require_last_push_approval_enabled_live():
             pytest.fail(
                 f"access denied reading '{RULESET_NAME}' ruleset "
                 f"(HTTP {detail.status_code}); "
-                "ensure GH_TOKEN has 'administration: read' permission"
+                "ensure GH_TOKEN has 'Metadata' (read) repository permission"
             )
         pytest.skip(
             f"could not read `{RULESET_NAME}` ruleset (HTTP {detail.status_code}); "
