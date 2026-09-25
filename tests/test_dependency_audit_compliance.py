@@ -232,7 +232,7 @@ def _parse_value(rest: str) -> list[str]:
     or a bare scalar (returned as a single-element list). Surrounding quotes are
     stripped so ``[main]`` and ``['main']`` compare equal."""
     rest = rest.strip()
-    lm = re.match(r"^\[([^\]]*)\]", rest)
+    lm = re.match(r"^\[([^\]]*)\]$", rest)
     if lm:
         return [v.strip().strip("'\"") for v in lm.group(1).split(",") if v.strip()]
     return [rest.strip("'\"")]
