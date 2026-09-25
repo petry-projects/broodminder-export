@@ -38,12 +38,19 @@ DEPENDENCY_AUDIT_WORKFLOW = ROOT / ".github" / "workflows" / "dependency-audit.y
 
 # The dependency-audit caller stub is a thin caller adopted verbatim from the org
 # standard; its `on:` trigger surface is owned centrally and must not drift. The
-# canonical set is pull_request + push (both on `main`) + merge_group, where
-# `merge_group` is required so the `dependency-audit / Detect ecosystems` status
-# check reports on a merge queue's `gh-readonly-queue/*` ref.
+# canonical surface is pull_request + push (both filtered to `main`) + merge_group,
+# where `merge_group` is required so the `dependency-audit / Detect ecosystems`
+# status check reports on a merge queue's `gh-readonly-queue/*` ref. The mapping is
+# compared *exactly* (not as a subset): a removed/retargeted `branches:` filter or
+# an added event is caught as drift rather than silently accepted. `None` marks a
+# trigger with no `branches:` filter.
 #
 # Ref: petry-projects/.github/standards/ci-standards.md#centralization-tiers
-_CANONICAL_ON_TRIGGERS = ("pull_request", "push", "merge_group")
+_CANONICAL_ON: dict[str, list[str] | None] = {
+    "pull_request": ["main"],
+    "push": ["main"],
+    "merge_group": None,
+}
 
 # The reusable dependency-audit workflow installs pip-audit from this file with
 # `--require-hashes`, so it must be pinned by exact version like the rest.
@@ -194,27 +201,56 @@ def test_predicate_accepts_the_real_file():
 # --- dependency-audit stub `on:` surface guard --------------------------------
 
 
-def _on_triggers(text: str) -> list[str]:
-    """Return the top-level trigger keys under the workflow's ``on:`` block.
+def _on_triggers(text: str) -> dict[str, list[str] | None]:
+    """Return the ``on:`` trigger mapping: each top-level trigger key mapped to
+    its ``branches:`` filter list, or ``None`` when it has no branch filter.
 
     Text-based (no YAML parser, matching this module's other guards): find the
-    ``on:`` mapping and collect the keys indented one level beneath it, stopping
-    at the next top-level (column-0) key.
+    ``on:`` mapping, then
+
+    * tolerate optional single/double quotes around ``on`` and its child keys;
+    * detect the child-key indent dynamically (``\\s+``) rather than assuming a
+      fixed width, so a re-indent of the stub does not fool the guard;
+    * skip blank and comment lines — a column-0 ``# comment`` no longer
+      prematurely ends the block and falsely reports later triggers missing;
+    * capture each trigger's ``branches: [..]`` flow filter so branch drift is
+      visible to the exact-match comparison.
+
+    A non-blank, non-comment, non-indented (column-0) line ends the ``on:`` block.
     """
     lines = text.splitlines()
-    triggers: list[str] = []
+    triggers: dict[str, list[str] | None] = {}
     in_on = False
+    indent: str | None = None
+    current: str | None = None
     for line in lines:
         if not in_on:
-            if re.match(r"^on:\s*$", line):
+            if re.match(r"^['\"]?on['\"]?:\s*$", line):
                 in_on = True
             continue
-        # A non-indented, non-blank line ends the `on:` block.
-        if line.strip() and not line.startswith((" ", "\t")):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        # A non-indented line ends the `on:` block.
+        if not line.startswith((" ", "\t")):
             break
-        m = re.match(r"^\s{2}([A-Za-z_]+):", line)
-        if m:
-            triggers.append(m.group(1))
+        if indent is None:
+            m = re.match(r"^(\s+)['\"]?[A-Za-z_]+['\"]?:", line)
+            if m:
+                indent = m.group(1)
+        key = re.match(rf"^{re.escape(indent)}['\"]?([A-Za-z_]+)['\"]?:", line) if indent else None
+        if key:
+            current = key.group(1)
+            triggers[current] = None
+            continue
+        # A more-deeply-indented line: capture a `branches: [..]` filter for the
+        # trigger currently in scope.
+        if current is not None:
+            bm = re.match(r"^\s+['\"]?branches['\"]?:\s*\[([^\]]*)\]", line)
+            if bm:
+                triggers[current] = [
+                    b.strip().strip("'\"") for b in bm.group(1).split(",") if b.strip()
+                ]
     return triggers
 
 
@@ -224,16 +260,62 @@ def test_dependency_audit_stub_on_surface_matches_standard():
         "adopted verbatim from petry-projects/.github standards/workflows/"
     )
     triggers = _on_triggers(DEPENDENCY_AUDIT_WORKFLOW.read_text(encoding="utf-8"))
-    missing = [t for t in _CANONICAL_ON_TRIGGERS if t not in triggers]
-    assert not missing, (
+    assert triggers == _CANONICAL_ON, (
         f"dependency-audit.yml `on:` surface has drifted from the standard: "
-        f"missing {missing} (found {triggers}). The stub's trigger surface is "
-        "owned centrally — re-sync from standards/workflows/dependency-audit.yml "
-        "(merge_group is required for merge-queue status reporting)."
+        f"expected {_CANONICAL_ON} but found {triggers}. The stub's trigger "
+        "surface is owned centrally — re-sync from "
+        "standards/workflows/dependency-audit.yml (merge_group is required for "
+        "merge-queue status reporting, and both pull_request/push must stay "
+        "filtered to `main`)."
     )
 
 
 def test_on_trigger_parser_flags_missing_merge_group():
-    # Teeth: a stub missing `merge_group` must be detected by the parser.
+    # Teeth: a stub missing `merge_group` must be detected as drift.
     drifted = "on:\n  pull_request:\n    branches: [main]\n  push:\n    branches: [main]\n"
-    assert _on_triggers(drifted) == ["pull_request", "push"]
+    assert _on_triggers(drifted) == {"pull_request": ["main"], "push": ["main"]}
+
+
+def test_on_trigger_parser_flags_dropped_branch_filter():
+    # Teeth: dropping `branches: [main]` from push must be visible as drift.
+    drifted = "on:\n  pull_request:\n    branches: [main]\n  push:\n  merge_group:\n"
+    assert _on_triggers(drifted) != _CANONICAL_ON
+    assert _on_triggers(drifted)["push"] is None
+
+
+def test_on_trigger_parser_flags_retargeted_branch_filter():
+    # Teeth: retargeting a filter to another branch must be visible as drift.
+    drifted = (
+        "on:\n  pull_request:\n    branches: [develop]\n"
+        "  push:\n    branches: [main]\n  merge_group:\n"
+    )
+    assert _on_triggers(drifted) != _CANONICAL_ON
+
+
+def test_on_trigger_parser_flags_added_event():
+    # Teeth: an extra unexpected trigger must be visible as drift.
+    drifted = (
+        "on:\n  pull_request:\n    branches: [main]\n  push:\n    branches: [main]\n"
+        "  merge_group:\n  schedule:\n"
+    )
+    assert _on_triggers(drifted) != _CANONICAL_ON
+    assert "schedule" in _on_triggers(drifted)
+
+
+def test_on_trigger_parser_ignores_column0_comment():
+    # Regression (codeant/gemini): a column-0 comment inside/after the `on:` block
+    # must not end parsing and drop later triggers.
+    text = (
+        "on:\n  pull_request:\n    branches: [main]\n"
+        "# a stray column-0 comment\n  push:\n    branches: [main]\n  merge_group:\n"
+    )
+    assert _on_triggers(text) == _CANONICAL_ON
+
+
+def test_on_trigger_parser_tolerates_alternate_indent_and_quotes():
+    # Robustness (gemini): a 4-space indent and quoted keys parse identically.
+    text = (
+        "'on':\n    'pull_request':\n        branches: [main]\n"
+        "    push:\n        branches: [main]\n    merge_group:\n"
+    )
+    assert _on_triggers(text) == _CANONICAL_ON
