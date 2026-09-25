@@ -347,30 +347,41 @@ def test_write_gz_roundtrip(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# extract_all._empty_run
+# extract_all._bump_empty / extract_all._stop
+# (the early-exit bookkeeping formerly combined in `_empty_run`)
 # ---------------------------------------------------------------------------
+def _empty_args(stop_after_empty=0, reverse=True):
+    args = MagicMock()
+    args.stop_after_empty = stop_after_empty
+    args.reverse = reverse
+    return args
+
+
 def test_empty_run_off():
-    count, stop = extract_all._empty_run(5, 1, 0)
-    assert count == 5
-    assert stop is False
+    args = _empty_args(stop_after_empty=0)
+    assert extract_all._bump_empty(args, 5, 1) == 5
+    assert extract_all._stop(args, 5) is False
 
 
 def test_empty_run_increment():
-    count, stop = extract_all._empty_run(1, 0, 3)
+    args = _empty_args(stop_after_empty=3)
+    count = extract_all._bump_empty(args, 1, 0)
     assert count == 2
-    assert stop is False
+    assert extract_all._stop(args, count) is False
 
 
 def test_empty_run_reaches_limit():
-    count, stop = extract_all._empty_run(2, 0, 3)
+    args = _empty_args(stop_after_empty=3)
+    count = extract_all._bump_empty(args, 2, 0)
     assert count == 3
-    assert stop is True
+    assert extract_all._stop(args, count) is True
 
 
 def test_empty_run_reset_on_data():
-    count, stop = extract_all._empty_run(5, 1, 3)
+    args = _empty_args(stop_after_empty=3)
+    count = extract_all._bump_empty(args, 5, 1)
     assert count == 0
-    assert stop is False
+    assert extract_all._stop(args, count) is False
 
 
 # ---------------------------------------------------------------------------
