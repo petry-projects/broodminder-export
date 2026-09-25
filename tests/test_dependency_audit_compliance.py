@@ -34,6 +34,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 REQUIREMENTS = ROOT / "scripts" / "pip-audit-requirements.txt"
+DEPENDENCY_AUDIT_WORKFLOW = ROOT / ".github" / "workflows" / "dependency-audit.yml"
+
+# The dependency-audit caller stub is a thin caller adopted verbatim from the org
+# standard; its `on:` trigger surface is owned centrally and must not drift. The
+# canonical set is pull_request + push (both on `main`) + merge_group, where
+# `merge_group` is required so the `dependency-audit / Detect ecosystems` status
+# check reports on a merge queue's `gh-readonly-queue/*` ref.
+#
+# Ref: petry-projects/.github/standards/ci-standards.md#centralization-tiers
+_CANONICAL_ON_TRIGGERS = ("pull_request", "push", "merge_group")
 
 # The reusable dependency-audit workflow installs pip-audit from this file with
 # `--require-hashes`, so it must be pinned by exact version like the rest.
@@ -179,3 +189,51 @@ def test_predicate_accepts_the_real_file():
     # Sanity anchor: the shipped file must be accepted, so the teeth above are
     # exercising genuinely-bad input rather than a perpetually-broken guard.
     assert requirements_violations(_requirements_text()) == []
+
+
+# --- dependency-audit stub `on:` surface guard --------------------------------
+
+
+def _on_triggers(text: str) -> list[str]:
+    """Return the top-level trigger keys under the workflow's ``on:`` block.
+
+    Text-based (no YAML parser, matching this module's other guards): find the
+    ``on:`` mapping and collect the keys indented one level beneath it, stopping
+    at the next top-level (column-0) key.
+    """
+    lines = text.splitlines()
+    triggers: list[str] = []
+    in_on = False
+    for line in lines:
+        if not in_on:
+            if re.match(r"^on:\s*$", line):
+                in_on = True
+            continue
+        # A non-indented, non-blank line ends the `on:` block.
+        if line.strip() and not line.startswith((" ", "\t")):
+            break
+        m = re.match(r"^\s{2}([A-Za-z_]+):", line)
+        if m:
+            triggers.append(m.group(1))
+    return triggers
+
+
+def test_dependency_audit_stub_on_surface_matches_standard():
+    assert DEPENDENCY_AUDIT_WORKFLOW.exists(), (
+        f"{DEPENDENCY_AUDIT_WORKFLOW} is missing — it is the thin caller stub "
+        "adopted verbatim from petry-projects/.github standards/workflows/"
+    )
+    triggers = _on_triggers(DEPENDENCY_AUDIT_WORKFLOW.read_text(encoding="utf-8"))
+    missing = [t for t in _CANONICAL_ON_TRIGGERS if t not in triggers]
+    assert not missing, (
+        f"dependency-audit.yml `on:` surface has drifted from the standard: "
+        f"missing {missing} (found {triggers}). The stub's trigger surface is "
+        "owned centrally — re-sync from standards/workflows/dependency-audit.yml "
+        "(merge_group is required for merge-queue status reporting)."
+    )
+
+
+def test_on_trigger_parser_flags_missing_merge_group():
+    # Teeth: a stub missing `merge_group` must be detected by the parser.
+    drifted = "on:\n  pull_request:\n    branches: [main]\n  push:\n    branches: [main]\n"
+    assert _on_triggers(drifted) == ["pull_request", "push"]
