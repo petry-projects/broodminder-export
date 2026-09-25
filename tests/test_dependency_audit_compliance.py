@@ -203,10 +203,65 @@ def test_predicate_accepts_the_real_file():
 # --- dependency-audit stub `on:` surface guard --------------------------------
 
 
+def _split_top_level(body: str) -> list[str]:
+    """Split ``body`` on top-level commas — those outside any ``[..]``/``{..}``
+    nesting — so an inline flow list embedded in a value (``types: [a, b]``) is
+    not torn apart at its internal commas."""
+    parts: list[str] = []
+    depth = 0
+    current = ""
+    for ch in body:
+        if ch in "[{":
+            depth += 1
+            current += ch
+        elif ch in "]}":
+            depth -= 1
+            current += ch
+        elif ch == "," and depth == 0:
+            parts.append(current)
+            current = ""
+        else:
+            current += ch
+    if current.strip():
+        parts.append(current)
+    return parts
+
+
+def _parse_value(rest: str) -> list[str]:
+    """Parse a nested option's value into a list: an inline ``[a, b]`` flow list,
+    or a bare scalar (returned as a single-element list). Surrounding quotes are
+    stripped so ``[main]`` and ``['main']`` compare equal."""
+    rest = rest.strip()
+    lm = re.match(r"^\[([^\]]*)\]", rest)
+    if lm:
+        return [v.strip().strip("'\"") for v in lm.group(1).split(",") if v.strip()]
+    return [rest.strip("'\"")]
+
+
+def _parse_inline_options(raw: str) -> dict[str, list[str]] | None:
+    """Parse an inline flow-mapping of trigger options written on the trigger's
+    own line, e.g. ``merge_group: {types: [checks_requested]}``. Returns the
+    option→values dict, or ``None`` when ``raw`` carries no inline mapping (or an
+    empty ``{}``, which is semantically the same as no options)."""
+    raw = raw.strip()
+    m = re.match(r"^\{(.*)\}$", raw)
+    if not m:
+        return None
+    body = m.group(1).strip()
+    if not body:
+        return None
+    options: dict[str, list[str]] = {}
+    for entry in _split_top_level(body):
+        em = re.match(r"^\s*['\"]?([A-Za-z_][\w-]*)['\"]?:\s*(.*)$", entry)
+        if em:
+            options[em.group(1)] = _parse_value(em.group(2))
+    return options
+
+
 def _on_triggers(text: str) -> dict[str, dict[str, list[str]] | None]:
     """Return the ``on:`` trigger mapping: each top-level trigger key mapped to a
-    dict of *all* its nested options (option name → its flow-list values), or
-    ``None`` when the trigger carries no nested options at all.
+    dict of *all* its nested options (option name → its value list), or ``None``
+    when the trigger carries no nested options at all.
 
     Text-based (no YAML parser, matching this module's other guards): find the
     ``on:`` mapping, then
@@ -221,7 +276,13 @@ def _on_triggers(text: str) -> dict[str, dict[str, list[str]] | None]:
       ``paths-ignore:`` …), not just ``branches:``, so drift such as a narrowed
       ``types: [opened]`` or an added ``paths-ignore:`` filter — which would stop
       audits running for synchronized PRs or selected files — is visible to the
-      exact-match comparison rather than silently discarded.
+      exact-match comparison rather than silently discarded;
+    * parse an inline option map written on the trigger's own line
+      (``merge_group: {types: [checks_requested]}``) so such drift is captured
+      rather than recorded as ``None`` and silently accepted;
+    * collect block-style sequences (``branches:`` followed by ``- main``) into
+      the same list an inline ``[main]`` produces, so a representation-only
+      rewrite compares equal instead of falsely reporting drift.
 
     A non-blank, non-comment, non-indented (column-0) line ends the ``on:`` block.
     """
@@ -230,6 +291,7 @@ def _on_triggers(text: str) -> dict[str, dict[str, list[str]] | None]:
     in_on = False
     trigger_indent: int | None = None
     current: str | None = None
+    current_option: str | None = None
     for line in lines:
         if not in_on:
             if re.match(r"^['\"]?on['\"]?:\s*$", line):
@@ -247,25 +309,37 @@ def _on_triggers(text: str) -> dict[str, dict[str, list[str]] | None]:
         km = re.match(r"^\s*['\"]?([A-Za-z_][\w-]*)['\"]?:\s*(.*)$", line)
         if cur_indent <= trigger_indent:
             # A top-level trigger key (e.g. `pull_request:`, `merge_group:`).
+            # Capture any inline option map on the same line; a bare trigger with
+            # no inline mapping records `None` until a nested option appears.
             if km:
                 current = km.group(1)
-                triggers[current] = None
+                current_option = None
+                triggers[current] = _parse_inline_options(km.group(2))
             continue
-        # A more-deeply-indented line: a nested option under `current`. Capture
-        # its `[..]` flow list (or the raw scalar/empty value) so any added or
-        # changed nested option is visible to the exact-match comparison.
-        if current is not None and km:
+        # A more-deeply-indented line under `current`.
+        if current is None:
+            continue
+        # A block-sequence item (`- main`) continues the current option's list,
+        # so block style parses identically to an inline `[main]` flow list.
+        sm = re.match(r"^\s*-\s*(.*)$", line)
+        if sm and current_option is not None:
+            item = sm.group(1).strip().strip("'\"")
+            if item:
+                if triggers[current] is None:
+                    triggers[current] = {}
+                triggers[current].setdefault(current_option, []).append(item)
+            continue
+        # A nested option (`branches: [main]`, `types: [opened]`, or a bare
+        # `branches:` whose items follow as a block sequence).
+        if km:
             option = km.group(1)
             rest = km.group(2).strip()
-            lm = re.match(r"^\[([^\]]*)\]", rest)
-            value = (
-                [v.strip().strip("'\"") for v in lm.group(1).split(",") if v.strip()]
-                if lm
-                else [rest]
-            )
+            current_option = option
             if triggers[current] is None:
                 triggers[current] = {}
-            triggers[current][option] = value
+            # An empty value starts a list the following `- item` lines fill;
+            # a present value (flow list or scalar) is captured immediately.
+            triggers[current][option] = _parse_value(rest) if rest else []
     return triggers
 
 
@@ -366,3 +440,40 @@ def test_on_trigger_parser_flags_added_paths_ignore_filter():
         "branches": ["main"],
         "paths-ignore": ["docs/**"],
     }
+
+
+def test_on_trigger_parser_flags_inline_option_map():
+    # Teeth (codex): an option map written on the trigger's own line, e.g.
+    # `merge_group: {types: [checks_requested]}`, must be parsed — not discarded
+    # and recorded as `None` — so the added filter surfaces as drift rather than
+    # being silently accepted against the canonical `merge_group: None`.
+    drifted = (
+        "on:\n  pull_request:\n    branches: [main]\n"
+        "  push:\n    branches: [main]\n"
+        "  merge_group: {types: [checks_requested]}\n"
+    )
+    assert _on_triggers(drifted) != _CANONICAL_ON
+    assert _on_triggers(drifted)["merge_group"] == {"types": ["checks_requested"]}
+
+
+def test_on_trigger_parser_accepts_block_style_branch_list():
+    # Representation-only tolerance (cubic): a valid YAML block sequence
+    # (`branches:` followed by `- main`) means the same as the canonical inline
+    # `branches: [main]`, so it must parse to the same mapping and NOT be reported
+    # as drift.
+    block_style = (
+        "on:\n  pull_request:\n    branches:\n      - main\n"
+        "  push:\n    branches:\n      - main\n  merge_group:\n"
+    )
+    assert _on_triggers(block_style) == _CANONICAL_ON
+
+
+def test_on_trigger_parser_flags_block_style_retargeted_branch():
+    # Teeth: a block-style sequence with a drifted target must still surface as
+    # drift, proving the block-sequence collection does not blindly accept.
+    drifted = (
+        "on:\n  pull_request:\n    branches:\n      - develop\n"
+        "  push:\n    branches:\n      - main\n  merge_group:\n"
+    )
+    assert _on_triggers(drifted) != _CANONICAL_ON
+    assert _on_triggers(drifted)["pull_request"] == {"branches": ["develop"]}
