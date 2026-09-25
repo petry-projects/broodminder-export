@@ -227,11 +227,44 @@ def _split_top_level(body: str) -> list[str]:
     return parts
 
 
+def _strip_inline_comment(text: str) -> str:
+    """Strip a YAML inline comment from ``text``.
+
+    A comment begins at a ``#`` that is at the start of the value or is preceded
+    by whitespace, and that lies outside any ``[..]``/``{..}`` nesting and outside
+    single/double quotes — matching YAML's rule that an inline comment must be
+    separated from the value by whitespace (so ``branches: [main] # default`` and
+    ``- main # default`` compare equal to their comment-free forms). A ``#`` glued
+    to a value (``feat#123``) or inside quotes/brackets is left untouched."""
+    depth = 0
+    quote: str | None = None
+    prev_ws = True  # start-of-string counts as preceding whitespace
+    for i, ch in enumerate(text):
+        if quote is not None:
+            if ch == quote:
+                quote = None
+            prev_ws = False
+            continue
+        if ch in "'\"":
+            quote = ch
+            prev_ws = False
+            continue
+        if ch == "#" and depth == 0 and prev_ws:
+            return text[:i].rstrip()
+        if ch in "[{":
+            depth += 1
+        elif ch in "]}":
+            depth -= 1
+        prev_ws = ch.isspace()
+    return text
+
+
 def _parse_value(rest: str) -> list[str]:
     """Parse a nested option's value into a list: an inline ``[a, b]`` flow list,
     or a bare scalar (returned as a single-element list). Surrounding quotes are
-    stripped so ``[main]`` and ``['main']`` compare equal."""
-    rest = rest.strip()
+    stripped so ``[main]`` and ``['main']`` compare equal, and a trailing inline
+    comment is ignored so ``[main] # default`` compares equal to ``[main]``."""
+    rest = _strip_inline_comment(rest).strip()
     lm = re.match(r"^\[([^\]]*)\]$", rest)
     if lm:
         return [v.strip().strip("'\"") for v in lm.group(1).split(",") if v.strip()]
@@ -241,12 +274,20 @@ def _parse_value(rest: str) -> list[str]:
 def _parse_inline_options(raw: str) -> dict[str, list[str]] | None:
     """Parse an inline flow-mapping of trigger options written on the trigger's
     own line, e.g. ``merge_group: {types: [checks_requested]}``. Returns the
-    option→values dict, or ``None`` when ``raw`` carries no inline mapping (or an
-    empty ``{}``, which is semantically the same as no options)."""
-    raw = raw.strip()
+    option→values dict, or ``None`` **only** when ``raw`` is genuinely empty (a
+    bare trigger) or an empty ``{}`` (semantically the same as no options).
+
+    A non-empty value that is *not* a mapping — a scalar such as ``false`` or a
+    flow list such as ``[types]`` — is not a valid bare trigger; it is captured
+    under the reserved ``<non-mapping>`` key (which the option regex can never
+    produce) so it compares distinct from ``None`` and surfaces as drift rather
+    than being silently collapsed to the bare-trigger representation."""
+    raw = _strip_inline_comment(raw).strip()
+    if not raw:
+        return None
     m = re.match(r"^\{(.*)\}$", raw)
     if not m:
-        return None
+        return {"<non-mapping>": _parse_value(raw)}
     body = m.group(1).strip()
     if not body:
         return None
@@ -323,7 +364,7 @@ def _on_triggers(text: str) -> dict[str, dict[str, list[str]] | None]:
         # so block style parses identically to an inline `[main]` flow list.
         sm = re.match(r"^\s*-\s*(.*)$", line)
         if sm and current_option is not None:
-            item = sm.group(1).strip().strip("'\"")
+            item = _strip_inline_comment(sm.group(1)).strip().strip("'\"")
             if item:
                 if triggers[current] is None:
                     triggers[current] = {}
@@ -477,3 +518,40 @@ def test_on_trigger_parser_flags_block_style_retargeted_branch():
     )
     assert _on_triggers(drifted) != _CANONICAL_ON
     assert _on_triggers(drifted)["pull_request"] == {"branches": ["develop"]}
+
+
+def test_on_trigger_parser_ignores_inline_value_comments():
+    # Representation-only tolerance (codex): a YAML inline comment on a trigger
+    # value — inline `branches: [main] # default` or block-style `- main # default`
+    # — is not part of the value, so the mapping must compare equal to the
+    # canonical comment-free form and NOT be reported as drift.
+    inline = (
+        "on:\n  pull_request:\n    branches: [main] # default branch\n"
+        "  push:\n    branches: [main]  # default branch\n  merge_group:\n"
+    )
+    assert _on_triggers(inline) == _CANONICAL_ON
+    block = (
+        "on:\n  pull_request:\n    branches:\n      - main # default branch\n"
+        "  push:\n    branches:\n      - main\n  merge_group:\n"
+    )
+    assert _on_triggers(block) == _CANONICAL_ON
+
+
+def test_on_trigger_parser_flags_non_mapping_bare_trigger_value():
+    # Teeth (codex): a bare canonical trigger changed to a non-mapping value —
+    # a scalar (`merge_group: false`) or a flow list (`merge_group: [types]`) —
+    # must NOT collapse to `None` (the valid bare-trigger representation); it has
+    # to surface as drift against the canonical `merge_group: None`.
+    scalar = (
+        "on:\n  pull_request:\n    branches: [main]\n"
+        "  push:\n    branches: [main]\n  merge_group: false\n"
+    )
+    assert _on_triggers(scalar) != _CANONICAL_ON
+    assert _on_triggers(scalar)["merge_group"] is not None
+
+    flow_list = (
+        "on:\n  pull_request:\n    branches: [main]\n"
+        "  push:\n    branches: [main]\n  merge_group: [types]\n"
+    )
+    assert _on_triggers(flow_list) != _CANONICAL_ON
+    assert _on_triggers(flow_list)["merge_group"] is not None
