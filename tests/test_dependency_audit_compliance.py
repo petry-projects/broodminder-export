@@ -265,6 +265,8 @@ def _parse_value(rest: str) -> list[str]:
     stripped so ``[main]`` and ``['main']`` compare equal, and a trailing inline
     comment is ignored so ``[main] # default`` compares equal to ``[main]``."""
     rest = _strip_inline_comment(rest).strip()
+    if not rest:
+        return []
     lm = re.match(r"^\[([^\]]*)\]$", rest)
     if lm:
         return [v.strip().strip("'\"") for v in lm.group(1).split(",") if v.strip()]
