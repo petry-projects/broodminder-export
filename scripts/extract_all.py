@@ -70,9 +70,11 @@ def select_apiaries(apiaries, filters):
     if not filters:
         return apiaries
     wanted = {a.lower() for a in filters}
+    wanted_ids = {a for a in filters}  # also check exact ID matches
     return [a for a in apiaries
             if (a.get("name") or "").lower() in wanted
-            or a.get("apiaryId") in filters]
+            or (a.get("apiaryId") or "").lower() in wanted
+            or a.get("apiaryId") in wanted_ids]
 
 
 def write_gz(path: Path, obj) -> None:
@@ -135,7 +137,11 @@ def _log_window(a, h, s, e, rec) -> None:
 
 def fetch_window(bm, a, h, hid: str, s: int, e: int, hdir: Path, args) -> dict:
     """Fetch one hive window (readings + optional notes), write the raw gzip
-    files, and return the per-window manifest record with row counts."""
+    files, and return the per-window manifest record with row counts.
+
+    Note: Internal retries may increment call_count beyond the expected
+    calls_per_window, so the overall budget check is approximate.
+    """
     hdir.mkdir(parents=True, exist_ok=True)
     rec = {"apiaryId": a.get("apiaryId"), "apiaryName": a.get("name"),
            "hiveName": h.get("name")}
@@ -144,6 +150,10 @@ def fetch_window(bm, a, h, hid: str, s: int, e: int, hdir: Path, args) -> dict:
     rec["reading_rows"] = count_reading_rows(readings)
 
     if not args.no_notes:
+        # Check budget before making notes call, since retries may have
+        # incremented call_count beyond what the pre-window check anticipated.
+        if bm.call_count >= args.max_calls:
+            raise _BudgetExhausted
         notes = bm.hive_notes(hid, s, e)
         write_gz(hdir / f"{s}-{e}.notes.json.gz", notes)
         rec["notes"] = count_notes(notes)

@@ -51,20 +51,6 @@ def walk_sample_ids(apiaries):
 find_sample_ids = walk_sample_ids
 
 
-def _sample(out, label, fn, ok_key, err_key, msg, clip):
-    """Probe one endpoint; store result under ok_key or error string under err_key."""
-    print(f"{label}: {msg}")
-    try:
-        data = fn()
-    except RateLimited:
-        raise
-    except BroodMinderError as e:
-        out[err_key] = str(e)
-        return
-    out[ok_key] = data
-    print(json.dumps(data, indent=2)[:clip])
-
-
 def sample_endpoint(out, key, header, err_label, fn, clip):
     """Call ``fn()`` for a probe endpoint, recording the sample (or the error)
     under ``key`` in ``out`` and printing a clipped preview."""
@@ -99,21 +85,24 @@ def main() -> int:
 
         end = now_epoch()
         start = end - 30 * DAY  # last 30 days as a probe
-        if hive_id is not None:
-            sample_endpoint(out, "hive_readings",
-                            f"→ GET /user/hive/{hive_id}/readings (last 30d)",
-                            "hive readings",
-                            lambda: bm.hive_readings(hive_id, start, end), 2500)
-            sample_endpoint(out, "hive_notes",
-                            f"→ GET /user/hive/{hive_id}/notes (last 30d)",
-                            "hive notes",
-                            lambda: bm.hive_notes(hive_id, start, end), 1500)
+        try:
+            if hive_id is not None:
+                sample_endpoint(out, "hive_readings",
+                                f"→ GET /user/hive/{hive_id}/readings (last 30d)",
+                                "hive readings",
+                                lambda: bm.hive_readings(hive_id, start, end), 2500)
+                sample_endpoint(out, "hive_notes",
+                                f"→ GET /user/hive/{hive_id}/notes (last 30d)",
+                                "hive notes",
+                                lambda: bm.hive_notes(hive_id, start, end), 1500)
 
-        if device_id is not None:
-            sample_endpoint(out, "device_readings",
-                            f"→ GET /user/device/{device_id}/readings (last 30d)",
-                            "device readings",
-                            lambda: bm.device_readings(device_id, start, end), 2500)
+            if device_id is not None:
+                sample_endpoint(out, "device_readings",
+                                f"→ GET /user/device/{device_id}/readings (last 30d)",
+                                "device readings",
+                                lambda: bm.device_readings(device_id, start, end), 2500)
+        except RateLimited as e:
+            print(f"\n⏸  rate limited by server ({e.status}). Saving partial result.")
 
         out["_call_count"] = bm.call_count
         print(f"\ntotal API calls this run: {bm.call_count}")
