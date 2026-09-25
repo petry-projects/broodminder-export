@@ -75,16 +75,6 @@ def select_apiaries(apiaries, filters):
             or a.get("apiaryId") in filters]
 
 
-def _empty_run(count: int, reading_rows: int, stop_after_empty: int):
-    """Return (new_count, should_stop) for consecutive-empty-window backfill tracking."""
-    if not stop_after_empty:
-        return count, False
-    if reading_rows:
-        return 0, False
-    new_count = count + 1
-    return new_count, new_count >= stop_after_empty
-
-
 def write_gz(path: Path, obj) -> None:
     """Write a JSON object gzip-compressed (raw hive data is highly repetitive
     and the spike disk is small — gzip shrinks it ~19x)."""
