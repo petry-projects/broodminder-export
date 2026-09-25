@@ -41,14 +41,16 @@ DEPENDENCY_AUDIT_WORKFLOW = ROOT / ".github" / "workflows" / "dependency-audit.y
 # canonical surface is pull_request + push (both filtered to `main`) + merge_group,
 # where `merge_group` is required so the `dependency-audit / Detect ecosystems`
 # status check reports on a merge queue's `gh-readonly-queue/*` ref. The mapping is
-# compared *exactly* (not as a subset): a removed/retargeted `branches:` filter or
-# an added event is caught as drift rather than silently accepted. `None` marks a
-# trigger with no `branches:` filter.
+# compared *exactly* (not as a subset): a removed/retargeted `branches:` filter, an
+# added nested option (e.g. a narrowed `types:`/`paths-ignore:`), or an added event
+# is caught as drift rather than silently accepted. Each trigger maps to a dict of
+# *all* its nested options (option → flow-list values); `None` marks a trigger with
+# no nested options at all.
 #
 # Ref: petry-projects/.github/standards/ci-standards.md#centralization-tiers
-_CANONICAL_ON: dict[str, list[str] | None] = {
-    "pull_request": ["main"],
-    "push": ["main"],
+_CANONICAL_ON: dict[str, dict[str, list[str]] | None] = {
+    "pull_request": {"branches": ["main"]},
+    "push": {"branches": ["main"]},
     "merge_group": None,
 }
 
@@ -201,27 +203,32 @@ def test_predicate_accepts_the_real_file():
 # --- dependency-audit stub `on:` surface guard --------------------------------
 
 
-def _on_triggers(text: str) -> dict[str, list[str] | None]:
-    """Return the ``on:`` trigger mapping: each top-level trigger key mapped to
-    its ``branches:`` filter list, or ``None`` when it has no branch filter.
+def _on_triggers(text: str) -> dict[str, dict[str, list[str]] | None]:
+    """Return the ``on:`` trigger mapping: each top-level trigger key mapped to a
+    dict of *all* its nested options (option name → its flow-list values), or
+    ``None`` when the trigger carries no nested options at all.
 
     Text-based (no YAML parser, matching this module's other guards): find the
     ``on:`` mapping, then
 
     * tolerate optional single/double quotes around ``on`` and its child keys;
-    * detect the child-key indent dynamically (``\\s+``) rather than assuming a
-      fixed width, so a re-indent of the stub does not fool the guard;
+    * detect the top-level trigger indent dynamically (the first indented line's
+      width) rather than assuming a fixed width, so a re-indent of the stub does
+      not fool the guard;
     * skip blank and comment lines — a column-0 ``# comment`` no longer
       prematurely ends the block and falsely reports later triggers missing;
-    * capture each trigger's ``branches: [..]`` flow filter so branch drift is
-      visible to the exact-match comparison.
+    * capture *every* nested option (``branches:``, ``types:``,
+      ``paths-ignore:`` …), not just ``branches:``, so drift such as a narrowed
+      ``types: [opened]`` or an added ``paths-ignore:`` filter — which would stop
+      audits running for synchronized PRs or selected files — is visible to the
+      exact-match comparison rather than silently discarded.
 
     A non-blank, non-comment, non-indented (column-0) line ends the ``on:`` block.
     """
     lines = text.splitlines()
-    triggers: dict[str, list[str] | None] = {}
+    triggers: dict[str, dict[str, list[str]] | None] = {}
     in_on = False
-    indent: str | None = None
+    trigger_indent: int | None = None
     current: str | None = None
     for line in lines:
         if not in_on:
@@ -231,26 +238,34 @@ def _on_triggers(text: str) -> dict[str, list[str] | None]:
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        # A non-indented line ends the `on:` block.
+        # A non-indented (column-0) line ends the `on:` block.
         if not line.startswith((" ", "\t")):
             break
-        if indent is None:
-            m = re.match(r"^(\s+)['\"]?[A-Za-z_]+['\"]?:", line)
-            if m:
-                indent = m.group(1)
-        key = re.match(rf"^{re.escape(indent)}['\"]?([A-Za-z_]+)['\"]?:", line) if indent else None
-        if key:
-            current = key.group(1)
-            triggers[current] = None
+        cur_indent = len(line) - len(line.lstrip())
+        if trigger_indent is None:
+            trigger_indent = cur_indent
+        km = re.match(r"^\s*['\"]?([A-Za-z_][\w-]*)['\"]?:\s*(.*)$", line)
+        if cur_indent <= trigger_indent:
+            # A top-level trigger key (e.g. `pull_request:`, `merge_group:`).
+            if km:
+                current = km.group(1)
+                triggers[current] = None
             continue
-        # A more-deeply-indented line: capture a `branches: [..]` filter for the
-        # trigger currently in scope.
-        if current is not None:
-            bm = re.match(r"^\s+['\"]?branches['\"]?:\s*\[([^\]]*)\]", line)
-            if bm:
-                triggers[current] = [
-                    b.strip().strip("'\"") for b in bm.group(1).split(",") if b.strip()
-                ]
+        # A more-deeply-indented line: a nested option under `current`. Capture
+        # its `[..]` flow list (or the raw scalar/empty value) so any added or
+        # changed nested option is visible to the exact-match comparison.
+        if current is not None and km:
+            option = km.group(1)
+            rest = km.group(2).strip()
+            lm = re.match(r"^\[([^\]]*)\]", rest)
+            value = (
+                [v.strip().strip("'\"") for v in lm.group(1).split(",") if v.strip()]
+                if lm
+                else [rest]
+            )
+            if triggers[current] is None:
+                triggers[current] = {}
+            triggers[current][option] = value
     return triggers
 
 
@@ -273,7 +288,10 @@ def test_dependency_audit_stub_on_surface_matches_standard():
 def test_on_trigger_parser_flags_missing_merge_group():
     # Teeth: a stub missing `merge_group` must be detected as drift.
     drifted = "on:\n  pull_request:\n    branches: [main]\n  push:\n    branches: [main]\n"
-    assert _on_triggers(drifted) == {"pull_request": ["main"], "push": ["main"]}
+    assert _on_triggers(drifted) == {
+        "pull_request": {"branches": ["main"]},
+        "push": {"branches": ["main"]},
+    }
 
 
 def test_on_trigger_parser_flags_dropped_branch_filter():
@@ -319,3 +337,32 @@ def test_on_trigger_parser_tolerates_alternate_indent_and_quotes():
         "    push:\n        branches: [main]\n    merge_group:\n"
     )
     assert _on_triggers(text) == _CANONICAL_ON
+
+
+def test_on_trigger_parser_flags_added_nested_type_filter():
+    # Teeth (codex): an added nested option such as `types: [opened]` under a
+    # trigger narrows when the audit runs (synchronized PRs would stop firing);
+    # it must be captured and surface as drift, not silently discarded.
+    drifted = (
+        "on:\n  pull_request:\n    branches: [main]\n    types: [opened]\n"
+        "  push:\n    branches: [main]\n  merge_group:\n"
+    )
+    assert _on_triggers(drifted) != _CANONICAL_ON
+    assert _on_triggers(drifted)["pull_request"] == {
+        "branches": ["main"],
+        "types": ["opened"],
+    }
+
+
+def test_on_trigger_parser_flags_added_paths_ignore_filter():
+    # Teeth (codex): a `paths-ignore:` filter would stop audits running for
+    # selected files; the added nested option must surface as drift.
+    drifted = (
+        "on:\n  pull_request:\n    branches: [main]\n"
+        "  push:\n    branches: [main]\n    paths-ignore: [docs/**]\n  merge_group:\n"
+    )
+    assert _on_triggers(drifted) != _CANONICAL_ON
+    assert _on_triggers(drifted)["push"] == {
+        "branches": ["main"],
+        "paths-ignore": ["docs/**"],
+    }
