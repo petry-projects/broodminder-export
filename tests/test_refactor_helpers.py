@@ -13,6 +13,7 @@ import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import NoReturn
 
 import pytest
 
@@ -82,6 +83,21 @@ def test_sample_endpoint_error_stores_error():
                              boom, clip=100)
     assert "device_readings_sample" not in out
     assert "kaboom" in out["device_readings_error"]
+
+
+def test_sample_endpoint_propagates_rate_limited():
+    # RateLimited must escape sample_endpoint (re-raised before the
+    # BroodMinderError handler) so the caller can abort the whole run rather
+    # than swallow a throttle as a per-endpoint error.
+    out = {}
+
+    def boom() -> NoReturn:
+        raise discover.RateLimited(429, "GET", "/x", "slow down")
+
+    with pytest.raises(discover.RateLimited):
+        discover.sample_endpoint(out, "hive_readings", "→ header", "hive readings",
+                                 boom, clip=100)
+    assert out == {}  # neither a sample nor an endpoint error was recorded
 
 
 # ==========================================================================
@@ -155,14 +171,18 @@ def test_fetch_window_no_notes(tmp_path):
 
 
 def test_process_hive_budget_raises(tmp_path):
+    # One call remaining (899/900) but a notes-enabled window needs two, so the
+    # guard must refuse *before* fetching. This catches a guard that checks only
+    # whether the count has already reached the budget.
     bm = _FakeBM([{"positionID": "p", "readings": [{"timestamp": 1}]}])
-    bm.call_count = 900  # already at budget
+    bm.call_count = 899  # one call left; a window needs two (readings + notes)
     completed = {}
     with pytest.raises(extract_all.BudgetExhausted):
         extract_all.process_hive(bm, {"apiaryId": "A", "name": "Api"},
                                   {"hiveId": "H1", "name": "Hive"},
                                   [(0, 100)], _args(max_calls=900), tmp_path, completed,
                                   lambda: None)
+    assert bm.call_count == 899  # no call was made
     assert completed == {}  # nothing fetched
 
 
